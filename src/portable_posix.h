@@ -59,6 +59,17 @@ int plat_last_key(void);
 /* Текущие координаты мыши в пикселях окна (или NULL). */
 void plat_mouse_pos(int *x, int *y);
 
+/* Левая кнопка мыши удерживается в данный момент: 1/0. */
+int plat_mouse_left_down(void);
+
+/* Левая кнопка мыши была НАЖАТА с предыдущего вызова: 1/0.
+ * Вызов «поглощает» событие нажатия. */
+int plat_mouse_left_pressed(void);
+
+/* Левая кнопка мыши была ОТПУЩЕНА с предыдущего вызова: 1/0.
+ * Вызов «поглощает» событие отпускания. */
+int plat_mouse_left_released(void);
+
 /* ---------------------------------------------------------------- файлы */
 
 typedef struct plat_file plat_file;
@@ -79,5 +90,8 @@ void        plat_file_close(plat_file *file);
 int  plat_init(int win_w, int win_h, const char *title);
 /* Полностью освобождает ресурсы платформы. */
 void plat_shutdown(void);
+
+/* Пауза в миллисекундах. */
+void plat_delay_ms(int ms);
 
 #endif /* PORTABLE_POSIX_H */

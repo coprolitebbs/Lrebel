@@ -36,6 +36,8 @@ static SDL_Renderer *g_renderer = NULL;
 static int g_quit_requested = 0;
 static int g_last_key = 0;
 static int g_mouse_x = 0, g_mouse_y = 0;
+static int g_mouse_left_pressed  = 0; /* фронт нажатия ЛКМ */
+static int g_mouse_left_released = 0; /* фронт отпускания ЛКМ */
 
 /* ------------------------------------------------------------- init/shutdown */
 
@@ -233,6 +235,12 @@ int plat_poll_events(void)
         case SDL_MOUSEBUTTONUP:
             g_mouse_x = ev.button.x;
             g_mouse_y = ev.button.y;
+            if (ev.button.button == SDL_BUTTON_LEFT) {
+                if (ev.type == SDL_MOUSEBUTTONDOWN)
+                    g_mouse_left_pressed = 1;
+                else
+                    g_mouse_left_released = 1;
+            }
             break;
         default:
             break;
@@ -252,6 +260,33 @@ void plat_mouse_pos(int *x, int *y)
 {
     if (x) *x = g_mouse_x;
     if (y) *y = g_mouse_y;
+}
+
+int plat_mouse_left_down(void)
+{
+    if (!g_window)
+        return 0;
+    return (SDL_GetMouseState(NULL, NULL) & SDL_BUTTON_LMASK) != 0;
+}
+
+int plat_mouse_left_pressed(void)
+{
+    int pressed = g_mouse_left_pressed;
+    g_mouse_left_pressed = 0;
+    return pressed;
+}
+
+int plat_mouse_left_released(void)
+{
+    int released = g_mouse_left_released;
+    g_mouse_left_released = 0;
+    return released;
+}
+
+void plat_delay_ms(int ms)
+{
+    if (ms > 0)
+        SDL_Delay((Uint32)ms);
 }
 
 /* ------------------------------------------------------------- файлы */
