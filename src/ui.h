@@ -19,6 +19,7 @@
 #define UI_H
 
 #define UI_BUTTON_CAPTION_MAX 64  /* байты Windows-1251 с завершающим '\0' */
+#define UI_BUTTON_GLYPH_MAX   16  /* байты глифа (вместо caption) */
 #define UI_BUTTONS_MAX        32  /* размер массива всех кнопок игры */
 
 typedef void (*ui_callback)(void);
@@ -26,6 +27,8 @@ typedef void (*ui_callback)(void);
 typedef struct ui_button {
     int x, y, w, h;                      /* прямоугольник кнопки на экране */
     char caption[UI_BUTTON_CAPTION_MAX]; /* надпись (Windows-1251) */
+    char glyph[UI_BUTTON_GLYPH_MAX];     /* глиф вместо надписи: рисуется,
+                                            если caption пуст (крестик и т.п.) */
     ui_callback on_press;                /* функция, запускаемая по нажатию */
     int enabled;                         /* 1 — отрисовывается и реагирует */
     int pressed;                         /* визуальное состояние нажатия */
@@ -51,6 +54,10 @@ void ui_shutdown(void);
  * если массив полон. caption_1251 — надпись в Windows-1251. */
 int  ui_button_add(int x, int y, int w, int h,
                    const char *caption_1251, ui_callback on_press);
+
+/* Задаёт глиф кнопки (Windows-1251), который рисуется вместо надписи,
+ * когда caption пуст (например, крестик закрытия окна). */
+void ui_button_set_glyph(int index, const char *glyph_1251);
 
 /* Отрисовка отдельной кнопки по её состоянию (enabled/pressed). */
 void ui_button_draw(const ui_button *btn);

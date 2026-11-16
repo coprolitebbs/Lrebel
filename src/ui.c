@@ -224,8 +224,27 @@ static void draw_tile_both(const ui_rect *r, int x, int y, int w, int h)
     }
 }
 
-/* Сборка рамки: углы, рёбра, центральная грань между рёбрами. */
-static void draw_9slice(const ui_rect *p, int x, int y, int w, int h)
+/* Центральная грань: заполняет область МЕЖДУ РЁБРАМИ (а не между углами —
+ * ширина/высота рёбер может отличаться от размера углов). */
+static void draw_center(const ui_rect *p, int x, int y, int w, int h)
+{
+    int cw = p[P_TL].w, ch = p[P_TL].h;
+    if (w < 2 * cw)
+        cw = w / 2; /* очень узкая кнопка: углы сжимаются */
+    if (h < 2 * ch)
+        ch = h / 2;
+    if (cw < 1 || ch < 1)
+        return;
+    draw_tile_both(&p[P_CENTER],
+                   x + p[P_LEFT].w, y + p[P_TOP].h,
+                   w - p[P_LEFT].w - p[P_RIGHT].w,
+                   h - p[P_TOP].h - p[P_BOTTOM].h);
+}
+
+/* Рамка: рёбра между углами, углы — последними, поверх заливки: они
+ * непрозрачные и перекрывают её в своих квадрантах, поэтому рамка
+ * получается непрерывной при любой толщине рёбер. */
+static void draw_border(const ui_rect *p, int x, int y, int w, int h)
 {
     int cw = p[P_TL].w, ch = p[P_TL].h;
     if (w < 2 * cw)
@@ -235,22 +254,47 @@ static void draw_9slice(const ui_rect *p, int x, int y, int w, int h)
     if (cw < 1 || ch < 1)
         return;
 
-    draw_stretch(&p[P_TL], x, y, cw, ch);
-    draw_stretch(&p[P_TR], x + w - cw, y, cw, ch);
-    draw_stretch(&p[P_BL], x, y + h - ch, cw, ch);
-    draw_stretch(&p[P_BR], x + w - cw, y + h - ch, cw, ch);
-
     draw_tile_h(&p[P_TOP], x + cw, y, w - 2 * cw);
     draw_tile_h(&p[P_BOTTOM], x + cw, y + h - p[P_BOTTOM].h, w - 2 * cw);
     draw_tile_v(&p[P_LEFT], x, y + ch, h - 2 * ch);
     draw_tile_v(&p[P_RIGHT], x + w - p[P_RIGHT].w, y + ch, h - 2 * ch);
 
-    draw_tile_both(&p[P_CENTER],
-                   x + cw, y + p[P_TOP].h,
-                   w - 2 * cw, h - p[P_TOP].h - p[P_BOTTOM].h);
+    draw_stretch(&p[P_TL], x, y, cw, ch);
+    draw_stretch(&p[P_TR], x + w - cw, y, cw, ch);
+    draw_stretch(&p[P_BL], x, y + h - ch, cw, ch);
+    draw_stretch(&p[P_BR], x + w - cw, y + h - ch, cw, ch);
+}
+
+/* Сборка 9-среза: сначала заливка, затем рамка. */
+static void draw_9slice(const ui_rect *p, int x, int y, int w, int h)
+{
+    draw_center(p, x, y, w, h);
+    draw_border(p, x, y, w, h);
 }
 
 /* ------------------------------------------------------------ кнопки */
+
+/* Надпись или глиф по центру кнопки (общая логика размещения). */
+static void draw_button_label(const ui_button *btn, const char *text)
+{
+    int scr_h = plat_screen_height();
+    int len = (int)strlen(text);
+    /* базовый размер — 55% высоты кнопки; при необходимости
+     * сжимаем, чтобы текст занимал не более 80% ширины */
+    float size = 0.55f * (float)btn->h / (float)scr_h;
+    float fit_w = 0.8f * (float)btn->w / ((float)len * (float)scr_h);
+    if (len > 0 && size > fit_w)
+        size = fit_w;
+    int glyph = (int)(size * (float)scr_h + 0.5f);
+    int text_w = string_width(text, size);
+    int tx = btn->x + (btn->w - text_w) / 2;
+    int ty = btn->y + (btn->h - glyph) / 2;
+    if (btn->pressed) {
+        tx += 2; /* надпись «утапливается» вместе с кнопкой */
+        ty += 2;
+    }
+    draw_string(text, tx, ty, size);
+}
 
 void ui_button_draw(const ui_button *btn)
 {
@@ -260,25 +304,11 @@ void ui_button_draw(const ui_button *btn)
     const ui_rect *pieces = btn->pressed ? g_button_pressed : g_button;
     draw_9slice(pieces, btn->x, btn->y, btn->w, btn->h);
 
-    if (btn->caption[0] != '\0') {
-        int scr_h = plat_screen_height();
-        int len = (int)strlen(btn->caption);
-        /* базовый размер — 55% высоты кнопки; при необходимости
-         * сжимаем, чтобы надпись занимала не более 80% ширины */
-        float size = 0.55f * (float)btn->h / (float)scr_h;
-        float fit_w = 0.8f * (float)btn->w / ((float)len * (float)scr_h);
-        if (len > 0 && size > fit_w)
-            size = fit_w;
-        int glyph = (int)(size * (float)scr_h + 0.5f);
-        int text_w = string_width(btn->caption, size);
-        int tx = btn->x + (btn->w - text_w) / 2;
-        int ty = btn->y + (btn->h - glyph) / 2;
-        if (btn->pressed) {
-            tx += 2; /* надпись «утапливается» вместе с кнопкой */
-            ty += 2;
-        }
-        draw_string(btn->caption, tx, ty, size);
-    }
+    /* рисуется надпись, а если она пуста — глиф (крестик и т.п.) */
+    if (btn->caption[0] != '\0')
+        draw_button_label(btn, btn->caption);
+    else if (btn->glyph[0] != '\0')
+        draw_button_label(btn, btn->glyph);
 }
 
 int ui_button_check_press(const ui_button *btn)
@@ -329,22 +359,32 @@ void ui_buttons_draw(void)
             ui_button_draw(&ui_buttons[i]);
 }
 
+void ui_button_set_glyph(int index, const char *glyph_1251)
+{
+    if (index < 0 || index >= ui_buttons_count)
+        return;
+    ui_button *b = &ui_buttons[index];
+    if (glyph_1251) {
+        strncpy(b->glyph, glyph_1251, UI_BUTTON_GLYPH_MAX - 1);
+        b->glyph[UI_BUTTON_GLYPH_MAX - 1] = '\0';
+    } else {
+        b->glyph[0] = '\0';
+    }
+}
+
 /* ------------------------------------------------------------ окно */
 
 void ui_window_draw(int x, int y, int w, int h)
 {
     if (!g_skin || w <= 0 || h <= 0)
         return;
-    int cw = g_win[P_TL].w, ch = g_win[P_TL].h;
-    if (w < 2 * cw)
-        cw = w / 2;
-    if (h < 2 * ch)
-        ch = h / 2;
-    draw_9slice(g_win, x, y, w, h);
-    /* полупрозрачный фон содержимого поверх центральной грани */
+    /* заливка между рёбрами, поверх неё фон-паттерн, рамка — последней */
+    draw_center(g_win, x, y, w, h);
     draw_tile_both(&g_win_bg,
-                   x + cw, y + g_win[P_TOP].h,
-                   w - 2 * cw, h - g_win[P_TOP].h - g_win[P_BOTTOM].h);
+                   x + g_win[P_LEFT].w, y + g_win[P_TOP].h,
+                   w - g_win[P_LEFT].w - g_win[P_RIGHT].w,
+                   h - g_win[P_TOP].h - g_win[P_BOTTOM].h);
+    draw_border(g_win, x, y, w, h);
 }
 
 /* ------------------------------------------------------------ прогрессбар */

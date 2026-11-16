@@ -4,11 +4,13 @@
  * При старте последовательно загружаются конфигурационные файлы и
  * изображения (config/main.cfg, img/font.png, config/windows.cfg,
  * img/windows.png); каждый шаг обновляет прогрессбар. После загрузки
- * отрисовывается главное меню: строка title (секция {main}, параметр
- * title) вверху экрана и две кнопки внизу — «Новая игра» (секция
- * {main_btns}, параметр play_button, обработчик пока не привязан) и
- * «Выход» ({main_btns}, close_button, обработчик app_quit завершает
- * приложение). Корректно завершается по закрытию окна и по кнопке.
+ * отрисовывается главное меню: типовое окно на весь экран как фон, строка
+ * title (секция {main}, параметр title) вверху экрана и внизу две кнопки —
+ * «Новая игра» (секция {main_btns}, параметр play_button, обработчик пока
+ * не привязан) и «Выход» ({main_btns}, close_button, обработчик app_quit
+ * завершает приложение). В правом верхнем углу окна — кнопка закрытия
+ * с глифом-крестиком ({main_btns}, close_glyph) вместо надписи и той же
+ * функцией app_quit. Корректно завершается по закрытию окна и по кнопкам.
  *
  * Верхний уровень: main.c, ui.c, font.c, readconfig.c — только
  * абстрактные функции portable_posix.h и ui.h.
@@ -81,13 +83,17 @@ static void draw_loading_frame(float fraction)
     plat_flip_frame();
 }
 
-/* кадр главного меню: title вверху, кнопки внизу */
+/* кадр главного меню: окно на весь экран как фон, поверх — title вверху
+ * и кнопки внизу */
 static void draw_menu_frame(void)
 {
     plat_clear_screen(0, 0, 0);
 
     int scr_w = plat_screen_width();
     int scr_h = plat_screen_height();
+
+    /* типовое окно на весь экран — задний план главного меню */
+    ui_window_draw(0, 0, scr_w, scr_h);
 
     int glyph = (int)(title_size * (float)scr_h + 0.5f);
     int text_w = string_width(title_1251, title_size);
@@ -97,16 +103,19 @@ static void draw_menu_frame(void)
     plat_flip_frame();
 }
 
-/* добавить две кнопки главного меню */
+/* добавить две кнопки главного меню и кнопку закрытия окна (крестик) */
 static void add_menu_buttons(const config *cfg)
 {
     const char *play_utf8  = config_get(cfg, "main_btns", "play_button",  "");
     const char *close_utf8 = config_get(cfg, "main_btns", "close_button", "");
+    const char *x_utf8     = config_get(cfg, "main_btns", "close_glyph",  "X");
 
     char play_1251[UI_BUTTON_CAPTION_MAX];
     char close_1251[UI_BUTTON_CAPTION_MAX];
+    char x_1251[UI_BUTTON_GLYPH_MAX];
     utf8_to_win1251(play_utf8,  play_1251,  sizeof(play_1251));
     utf8_to_win1251(close_utf8, close_1251, sizeof(close_1251));
+    utf8_to_win1251(x_utf8,     x_1251,     sizeof(x_1251));
 
     int scr_w = plat_screen_width();
     int scr_h = plat_screen_height();
@@ -120,6 +129,13 @@ static void add_menu_buttons(const config *cfg)
     ui_button_add(x0, y, bw, bh, play_1251, NULL);
     /* «Выход»: завершение приложения */
     ui_button_add(x0 + bw + gap, y, bw, bh, close_1251, app_quit);
+
+    /* кнопка закрытия окна: пустой caption, глиф-крестик вместо него и
+     * та же функция завершения, что у кнопки «Выход» */
+    int csz = bh * 2 / 3;        /* квадратная кнопка в правом верхнем углу */
+    int margin = csz / 2;
+    int idx = ui_button_add(scr_w - csz - margin, margin, csz, csz, "", app_quit);
+    ui_button_set_glyph(idx, x_1251);
 }
 
 int main(void)
