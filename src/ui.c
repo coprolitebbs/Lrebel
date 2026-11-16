@@ -329,6 +329,15 @@ void ui_buttons_process(void)
     int press = plat_mouse_left_pressed();
     int release = plat_mouse_left_released();
     int down = plat_mouse_left_down();
+    ui_buttons_process_ext(press, release, down);
+}
+
+void ui_buttons_process_ext(int left_pressed, int left_released,
+                            int left_down)
+{
+    int press = left_pressed;
+    int release = left_released;
+    int down = left_down;
     int mx, my;
     plat_mouse_pos(&mx, &my);
 
@@ -350,6 +359,11 @@ void ui_buttons_process(void)
             b->pressed = 0;
         }
     }
+}
+
+void ui_buttons_clear(void)
+{
+    ui_buttons_count = 0;
 }
 
 void ui_buttons_draw(void)

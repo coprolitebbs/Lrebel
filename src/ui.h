@@ -70,6 +70,16 @@ int  ui_button_check_press(const ui_button *btn);
  * on_press при клике. Вызывать ОДИН раз за кадр до отрисовки. */
 void ui_buttons_process(void);
 
+/* То же, но фронты левой кнопки мыши передаёт вызывающий код — для
+ * случаев, когда кадр читает их сам (редактор карт: свои клики плюс
+ * кнопки модальных окон). Значения — те же, что возвращают
+ * plat_mouse_left_pressed/released/down за этот кадр. */
+void ui_buttons_process_ext(int left_pressed, int left_released,
+                            int left_down);
+
+/* Удаляет все кнопки (массив очищается). */
+void ui_buttons_clear(void);
+
 /* Отрисовка всех отрисовываемых кнопок. */
 void ui_buttons_draw(void);
 

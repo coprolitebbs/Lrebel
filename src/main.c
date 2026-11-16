@@ -1,19 +1,22 @@
 /*
- * main.c — Lrebel, этап 2: загрузка с прогрессбаром и главное меню.
+ * main.c — Lrebel, этап 2: загрузка с прогрессбаром и главное меню; этап 3:
+ * редактор карт по параметру командной строки "-ed".
  *
  * При старте последовательно загружаются конфигурационные файлы и
  * изображения (config/main.cfg, img/font.png, config/windows.cfg,
- * img/windows.png); каждый шаг обновляет прогрессбар. После загрузки
- * отрисовывается главное меню: типовое окно на весь экран как фон, строка
- * title (секция {main}, параметр title) вверху экрана и внизу две кнопки —
- * «Новая игра» (секция {main_btns}, параметр play_button, обработчик пока
- * не привязан) и «Выход» ({main_btns}, close_button, обработчик app_quit
- * завершает приложение). В правом верхнем углу окна — кнопка закрытия
- * с глифом-крестиком ({main_btns}, close_glyph) вместо надписи и той же
- * функцией app_quit. Корректно завершается по закрытию окна и по кнопкам.
+ * img/windows.png); каждый шаг обновляет прогрессбар. После загрузки:
+ *   - обычный запуск — главное меню: типовое окно на весь экран как фон,
+ *     строка title (секция {main}, параметр title) вверху экрана и внизу
+ *     две кнопки — «Новая игра» (секция {main_btns}, параметр play_button,
+ *     обработчик пока не привязан) и «Выход» ({main_btns}, close_button,
+ *     обработчик app_quit завершает приложение); в правом верхнем углу —
+ *     кнопка закрытия с глифом-крестиком ({main_btns}, close_glyph);
+ *   - запуск с "-ed" — редактор карт, минуя главное меню. Параметр
+ *     "-filename map1.map" задаёт файл карты в папке maps/ (по умолчанию
+ *     unnamed.map; файл создаётся при сохранении по Ctrl+S).
  *
- * Верхний уровень: main.c, ui.c, font.c, readconfig.c — только
- * абстрактные функции portable_posix.h и ui.h.
+ * Верхний уровень: main.c, ui.c, font.c, readconfig.c, map.c, editor.c —
+ * только абстрактные функции portable_posix.h, ui.h, map.h, editor.h.
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -24,6 +27,7 @@
 #include "utf8_win1251.h"
 #include "font.h"
 #include "ui.h"
+#include "editor.h"
 
 #define CONFIG_PATH   "config/main.cfg"
 #define WINDOWS_CFG   "config/windows.cfg"
@@ -138,8 +142,18 @@ static void add_menu_buttons(const config *cfg)
     ui_button_set_glyph(idx, x_1251);
 }
 
-int main(void)
+int main(int argc, char **argv)
 {
+    /* --- параметры командной строки: -ed и -filename map1.map --- */
+    int editor_mode = 0;
+    const char *map_name = NULL;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "-ed") == 0)
+            editor_mode = 1;
+        else if (strcmp(argv[i], "-filename") == 0 && i + 1 < argc)
+            map_name = argv[++i];
+    }
+
     /* --- шаг 1: конфигурация --- */
     config *cfg = config_load(CONFIG_PATH);
     if (!cfg) {
@@ -153,7 +167,8 @@ int main(void)
     int load_delay = config_get_int(cfg, "main", "load_step_delay_ms", 150);
 
     /* --- шаг 2: платформа --- */
-    if (plat_init(win_w, win_h, WINDOW_TITLE) != 0) {
+    if (plat_init(win_w, win_h,
+                  editor_mode ? "Lrebel — редактор карт" : WINDOW_TITLE) != 0) {
         config_free(cfg);
         return 1;
     }
@@ -199,15 +214,31 @@ int main(void)
     draw_loading_frame(0.6f);
     plat_delay_ms(load_delay);
 
-    /* --- шаг 6: кнопки меню (секция {main_btns}) --- */
-    add_menu_buttons(cfg);
-    draw_loading_frame(1.0f);
-    plat_delay_ms(load_delay);
+    /* --- шаг 6: главное меню или редактор карт (минуя меню) --- */
+    if (editor_mode) {
+        /* ресурсы редактора: cfg/editor.cfg, img/gtiles.png, карта */
+        if (editor_init(map_name) != 0) {
+            ui_shutdown();
+            font_shutdown();
+            plat_shutdown();
+            config_free(cfg);
+            return 1;
+        }
+        draw_loading_frame(1.0f);
+        plat_delay_ms(load_delay);
 
-    /* --- главный цикл меню --- */
-    while (!plat_poll_events() && !g_app_quit) {
-        ui_buttons_process();     /* мышь -> состояния и обработчики кнопок */
-        draw_menu_frame();
+        editor_run();          /* цикл редактора до выхода */
+        editor_shutdown();
+    } else {
+        add_menu_buttons(cfg);
+        draw_loading_frame(1.0f);
+        plat_delay_ms(load_delay);
+
+        /* --- главный цикл меню --- */
+        while (!plat_poll_events() && !g_app_quit) {
+            ui_buttons_process();     /* мышь -> состояния и обработчики кнопок */
+            draw_menu_frame();
+        }
     }
 
     /* --- корректное завершение --- */

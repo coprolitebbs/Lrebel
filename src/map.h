@@ -1,0 +1,182 @@
+/*
+ * map.h — карта игры: слои тайлов, объекты, невидимые блоки, камера.
+ *
+ * Карта — трёхмерный массив максимум 1024x1024 элементов толщиной 4 слоя:
+ *   слой 1 (индекс 0) — нижний, поверхность;
+ *   слои 2-3 (индексы 1-2) — накладываемые элементы поверхности и стены;
+ *   слой 4 (индекс 3) — самый верхний, отводится под ассеты.
+ * Каждый элемент хранит номер тайла в img/gtiles.png (0 — пусто); тайл
+ * (ряд, колонка) нумеруется с 1: id = (ряд-1)*32 + (колонка-1).
+ *
+ * Разметка img/gtiles.png (1024x1024, тайлы 32x32):
+ *   строка 1-3 — тайлы трёх персонажей: 8 направлений
+ *                (вверх, вниз, влево, вправо, влево-вверх, вправо-вверх,
+ *                влево-вниз, вправо-вниз) и тайл трупа;
+ *   строка 4   — тайлы подбираемого/бросаемого оружия;
+ *   строки 5-6 — тайлы поверхности (по 20 на строку);
+ *   строки 7-21 — тайлы стен (вертикальные, горизонтальные, диагональные);
+ *   строка 22  — тайлы ассетов.
+ *
+ * Объекты карты (персонажи и оружие) хранятся отдельным массивом;
+ * их координаты — вещественные (float), в элементах сетки карты.
+ * Невидимые блоки запрета перемещения хранятся в отдельном массиве
+ * размером с карту (удобно для последующего расчёта путей).
+ *
+ * Отрисовка — через абстрактные функции portable_posix.h; камера всегда
+ * проецируется в центр окна, от неё отсчитывается видимый участок карты.
+ */
+#ifndef MAP_H
+#define MAP_H
+
+#include <stddef.h>
+#include "portable_posix.h"
+
+#define MAP_MAX_SIZE    1024 /* максимальный размер карты по стороне */
+#define MAP_LAYERS      4    /* толщина карты в слоях                */
+#define MAP_ASSET_LAYER 3    /* индекс верхнего слоя под ассеты      */
+#define MAP_OBJECTS_MAX 256  /* максимум объектов на карте           */
+
+#define MAP_TILE_PX     32   /* размер тайла в img/gtiles.png        */
+#define MAP_TILES_PER_ROW 32 /* тайлов в строке тайлового листа      */
+
+/* --- тайлы img/gtiles.png (ряды и колонки нумеруются с 1) --- */
+
+/* Номер тайла по 1-базным ряду и колонке тайлового листа. */
+#define MAP_TILE_ID(row, col) (((row) - 1) * MAP_TILES_PER_ROW + ((col) - 1))
+
+/* Первая строка тайлов поверхности (строки 5-6) и последняя строка стен
+ * (строки 7-21); все тайлы диапазона [MAP_SURFACE_FIRST..MAP_WALLS_LAST]
+ * доступны в режиме редактирования поверхностей и стен. */
+#define MAP_SURFACE_ROW    5
+#define MAP_WALLS_LAST_ROW 21
+
+/* Направления персонажа — колонки 1..8 его строки, труп — колонка 9. */
+enum {
+    OBJ_DIR_UP = 0, OBJ_DIR_DOWN, OBJ_DIR_LEFT, OBJ_DIR_RIGHT,
+    OBJ_DIR_LU, OBJ_DIR_RU, OBJ_DIR_LD, OBJ_DIR_RD,
+    OBJ_DIR_CORPSE,
+    OBJ_DIR_COUNT
+};
+
+/* --- игровые объекты --- */
+
+/* Типы объектов: 0..2 — три персонажа, 3.. — подбираемое оружие. */
+#define OBJ_TYPE_CHAR_FIRST   0
+#define OBJ_TYPE_CHAR_COUNT   3
+#define OBJ_TYPE_WEAPON_FIRST 3
+
+/* Описание типа персонажа (задаётся в cfg/editor.cfg). */
+typedef struct map_char_type {
+    int  tile_row; /* строка тайлов персонажа в img/gtiles.png (с 1) */
+    int  player;   /* bool: тип управляется игроком (первый = true)  */
+} map_char_type;
+
+/* Экземпляр объекта на карте. */
+typedef struct map_object {
+    int   type; /* тип: OBJ_TYPE_* (персонаж или вид оружия)          */
+    float x, y; /* координаты на карте, элементы сетки (вещественные) */
+    int   dir;  /* направление персонажа OBJ_DIR_*; у оружия не используется */
+} map_object;
+
+/* --- камера --- */
+
+/* Камера — точка отсчёта отрисовки, всегда проецируется в центр окна.
+ * Координаты вещественные (элементы карты) для плавного перемещения;
+ * перемещение ограничено пределами карты. */
+typedef struct camera {
+    float x, y;   /* позиция камеры на карте (элементы)     */
+    float speed;  /* скорость перемещения, элементов/сек    */
+    int   vis;    /* видимых элементов по горизонтали и вертикали */
+    float min_x, min_y, max_x, max_y; /* пределы перемещения */
+} camera;
+
+/* --- карта --- */
+
+typedef struct game_map {
+    int            w, h;                /* размер в элементах (<= MAP_MAX_SIZE) */
+    unsigned short *layers[MAP_LAYERS]; /* w*h тайл-номеров на слой, 0 — пусто  */
+    map_object     objects[MAP_OBJECTS_MAX];
+    int            object_count;
+    unsigned char  *blocks;             /* w*h: 1 — невидимый блок запрета */
+    int            modified;            /* менялась ли с последнего сохранения */
+} game_map;
+
+/* --- реестр типов (cfg/editor.cfg) --- */
+
+/* Читает настройки редактора и описания типов объектов из editor_cfg_path
+ * (секции {editor}, {objects}, {char1}..{char3}). При отсутствии файла или
+ * параметров используются значения по умолчанию. 0 при успехе. */
+int  map_registry_init(const char *editor_cfg_path);
+
+extern map_char_type map_char_types[OBJ_TYPE_CHAR_COUNT];
+
+int   map_def_width(void);        /* размер карты по умолчанию из конфига   */
+int   map_def_height(void);
+int   map_vis_elements(void);     /* видимых элементов по стороне экрана    */
+float map_camera_speed(void);     /* скорость камеры, элементов/сек         */
+int   map_pickable_count(void);   /* видов подбираемого оружия (строка 4)   */
+int   map_asset_count(void);      /* тайлов ассетов (от первого тайла строки 22) */
+
+int map_object_type_count(void);  /* всего типов объектов (персонажи + оружие) */
+
+/* Тайл img/gtiles.png для отрисовки объекта: dir учитывается у персонажей
+ * (по умолчанию OBJ_DIR_DOWN); -1 при неизвестном типе. */
+int map_object_tile(int type, int dir);
+/* Тайл ассета по номеру от первого тайла строки 22. */
+int map_asset_tile(int index);
+
+/* Диапазон тайлов для режима поверхностей и стен (строки 5..21). */
+int map_surface_first_tile(void);
+int map_walls_last_tile(void);
+
+/* --- карта: жизненный цикл и файл --- */
+
+/* Создаёт пустую карту w*h (память под слои и блоки). 0 при успехе. */
+int  map_init(game_map *m, int w, int h);
+void map_free(game_map *m);
+
+/* Загружает карту из файла; 0 при успехе, -1 если файл не читается или
+ * испорчен (карта при этом остаётся пустой). */
+int  map_load(game_map *m, const char *path);
+/* Сохраняет карту (файл создаётся, если его не было). 0 при успехе. */
+int  map_save(const game_map *m, const char *path);
+
+/* --- объекты --- */
+
+/* Занята ли ячейка (cx, cy) каким-либо объектом. */
+int  map_cell_occupied(const game_map *m, int cx, int cy);
+/* Добавляет объект в ячейку; -1, если ячейка занята или объектов 256. */
+int  map_object_add(game_map *m, int type, float x, float y, int dir);
+/* Удаляет объект, стоящий в ячейке; возвращает 1, если удалён. */
+int  map_object_remove_at(game_map *m, int cx, int cy);
+
+/* --- камера --- */
+
+void camera_init(camera *c, int vis, float speed,
+                 float max_x, float max_y);
+/* Перемещение по удерживаемым WASD за dt секунд; с клавишей Ctrl камера
+ * на 's' не движется (чтобы не мешать Ctrl+S). */
+void camera_update(camera *c, float dt);
+/* Ограничивает координаты камеры пределами карты. */
+void camera_clamp(camera *c);
+
+/* --- преобразования координат --- */
+
+/* Размер тайла на экране в пикселях: min(ширина, высота)/vis. */
+float map_tile_px(const camera *c);
+/* Мир (элементы карты, вещественные) -> экран (пиксели окна). */
+void map_world_to_screen(const camera *c, float wx, float wy,
+                         int *sx, int *sy);
+/* Экран -> мир. */
+void map_screen_to_world(const camera *c, int sx, int sy,
+                         float *wx, float *wy);
+
+/* --- отрисовка --- */
+
+/* Рисует видимый участок карты относительно камеры: слои от нижнего к
+ * верхнему, поверх — объекты. show_blocks != 0 включает отрисовку
+ * невидимых блоков красными рамками (только в режиме редактора). */
+void map_draw(const game_map *m, const camera *c, const plat_image *tiles,
+              int show_blocks);
+
+#endif /* MAP_H */

@@ -12,6 +12,10 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <errno.h>
+
 #include <SDL.h>
 
 #define STB_IMAGE_IMPLEMENTATION
@@ -38,6 +42,15 @@ static int g_last_key = 0;
 static int g_mouse_x = 0, g_mouse_y = 0;
 static int g_mouse_left_pressed  = 0; /* фронт нажатия ЛКМ */
 static int g_mouse_left_released = 0; /* фронт отпускания ЛКМ */
+static int g_mouse_right_pressed  = 0;
+static int g_mouse_right_released = 0;
+
+/* удерживаемые клавиши: g_keys_held[keycode & KEYMAP_MASK];
+ * состояние ведётся по событиям KEYDOWN/KEYUP из plat_poll_events,
+ * поэтому работает одинаково и с реальным вводом, и с синтетикой */
+#define KEYMAP_MASK 1023
+static unsigned char g_keys_held[KEYMAP_MASK + 1];
+static int g_key_ctrl = 0; /* Ctrl удерживается (по keysym.mod) */
 
 /* ------------------------------------------------------------- init/shutdown */
 
@@ -50,6 +63,8 @@ int plat_init(int win_w, int win_h, const char *title)
 
     /* пиксель-арт: масштабирование тайлов без сглаживания */
     SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "nearest");
+    memset(g_keys_held, 0, sizeof(g_keys_held));
+    g_key_ctrl = 0;
 
     g_window = SDL_CreateWindow(title,
                                 SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
@@ -209,6 +224,25 @@ void plat_draw_image(const plat_image *img,
     SDL_RenderCopy(g_renderer, img->tex, &src, &dst);
 }
 
+void plat_draw_rect_frame(int x, int y, int w, int h,
+                          unsigned char r, unsigned char g, unsigned char b)
+{
+    if (w <= 0 || h <= 0)
+        return;
+    SDL_SetRenderDrawColor(g_renderer, r, g, b, 255);
+    SDL_Rect rect = { x, y, w, h };
+    SDL_RenderDrawRect(g_renderer, &rect);
+    /* вторая рамка со сдвигом — линия в 2 пикселя, заметнее на фоне карты */
+    SDL_Rect inner = { x + 1, y + 1, w - 2, h - 2 };
+    if (w > 2 && h > 2)
+        SDL_RenderDrawRect(g_renderer, &inner);
+}
+
+unsigned int plat_ticks(void)
+{
+    return SDL_GetTicks();
+}
+
 void plat_flip_frame(void)
 {
     SDL_RenderPresent(g_renderer);
@@ -225,7 +259,21 @@ int plat_poll_events(void)
             g_quit_requested = 1;
             break;
         case SDL_KEYDOWN:
-            g_last_key = (int)ev.key.keysym.sym;
+            g_keys_held[ev.key.keysym.sym & KEYMAP_MASK] = 1;
+            g_key_ctrl = (ev.key.keysym.mod & KMOD_CTRL) ? 1 : 0;
+            /* автоповтор не считается новым нажатием */
+            if (!ev.key.repeat) {
+                int sym = (int)ev.key.keysym.sym;
+                /* клавиатура навигации приводится к обычным кодам,
+                 * чтобы верхний уровень не зависел от SDL-констант */
+                if (sym == SDLK_KP_PLUS)  sym = '+';
+                if (sym == SDLK_KP_MINUS) sym = '-';
+                g_last_key = sym;
+            }
+            break;
+        case SDL_KEYUP:
+            g_keys_held[ev.key.keysym.sym & KEYMAP_MASK] = 0;
+            g_key_ctrl = (ev.key.keysym.mod & KMOD_CTRL) ? 1 : 0;
             break;
         case SDL_MOUSEMOTION:
             g_mouse_x = ev.motion.x;
@@ -240,6 +288,11 @@ int plat_poll_events(void)
                     g_mouse_left_pressed = 1;
                 else
                     g_mouse_left_released = 1;
+            } else if (ev.button.button == SDL_BUTTON_RIGHT) {
+                if (ev.type == SDL_MOUSEBUTTONDOWN)
+                    g_mouse_right_pressed = 1;
+                else
+                    g_mouse_right_released = 1;
             }
             break;
         default:
@@ -254,6 +307,18 @@ int plat_last_key(void)
     int key = g_last_key;
     g_last_key = 0;
     return key;
+}
+
+int plat_key_held(int keycode)
+{
+    if (keycode <= 0)
+        return 0;
+    return g_keys_held[keycode & KEYMAP_MASK];
+}
+
+int plat_key_ctrl(void)
+{
+    return g_key_ctrl;
 }
 
 void plat_mouse_pos(int *x, int *y)
@@ -283,10 +348,40 @@ int plat_mouse_left_released(void)
     return released;
 }
 
+int plat_mouse_right_down(void)
+{
+    if (!g_window)
+        return 0;
+    return (SDL_GetMouseState(NULL, NULL) & SDL_BUTTON_RMASK) != 0;
+}
+
+int plat_mouse_right_pressed(void)
+{
+    int pressed = g_mouse_right_pressed;
+    g_mouse_right_pressed = 0;
+    return pressed;
+}
+
+int plat_mouse_right_released(void)
+{
+    int released = g_mouse_right_released;
+    g_mouse_right_released = 0;
+    return released;
+}
+
 void plat_delay_ms(int ms)
 {
     if (ms > 0)
         SDL_Delay((Uint32)ms);
+}
+
+int plat_mkdir(const char *path)
+{
+    if (!path || !*path)
+        return -1;
+    if (mkdir(path, 0777) == 0)
+        return 0;
+    return (errno == EEXIST) ? 0 : -1;
 }
 
 /* ------------------------------------------------------------- файлы */
