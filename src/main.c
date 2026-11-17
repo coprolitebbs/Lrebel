@@ -216,7 +216,7 @@ int main(int argc, char **argv)
 
     /* --- шаг 6: главное меню или редактор карт (минуя меню) --- */
     if (editor_mode) {
-        /* ресурсы редактора: cfg/editor.cfg, img/gtiles.png, карта */
+        /* ресурсы редактора: config/editor.cfg, img/gtiles.png, карта */
         if (editor_init(map_name) != 0) {
             ui_shutdown();
             font_shutdown();

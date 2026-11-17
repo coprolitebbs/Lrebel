@@ -17,7 +17,7 @@
 #include "map.h"
 #include "editor.h"
 
-#define EDITOR_CFG       "cfg/editor.cfg"
+#define EDITOR_CFG       "config/editor.cfg"
 #define GTILES_PATH      "img/gtiles.png"
 #define MAP_DIR          "maps"
 #define DEFAULT_MAP_NAME "unnamed.map"
@@ -61,7 +61,8 @@ static unsigned g_last_ticks = 0;
 
 /* --- строки интерфейса (Windows-1251) --- */
 static char g_txt_modes[ED_MODE_COUNT][64];
-static char g_txt_hint[160];
+static char g_txt_hint[160];       /* общая подсказка (режимы 2-4)      */
+static char g_txt_hint_tiles[160]; /* подсказка режима поверхностей    */
 static char g_fmt_bar_tiles[96];   /* "Режим: %s | Слой: %d/3 | Тайл: %d" */
 static char g_fmt_bar_objects[64]; /* "Режим: %s | Тип: %d/%d"            */
 static char g_fmt_bar_assets[64];  /* "Режим: %s | Ассет: %d/%d"          */
@@ -83,6 +84,9 @@ static void init_strings(void)
     utf8_to_win1251("WASD камера | SPACE выбор | 1-4 режимы | +/- слой "
                     "| Ctrl+S сохранить | ESC выход",
                     g_txt_hint, sizeof(g_txt_hint));
+    utf8_to_win1251("WASD камера | SPACE выбор | ЛКМ рисование, ПКМ взять "
+                    "тайл | +/- слой | Ctrl+S сохранить | ESC выход",
+                    g_txt_hint_tiles, sizeof(g_txt_hint_tiles));
     utf8_to_win1251("Режим: %s | Слой: %d/3 | Тайл: %d | %s",
                     g_fmt_bar_tiles, sizeof(g_fmt_bar_tiles));
     utf8_to_win1251("Режим: %s | Тип: %d/%d | %s",
@@ -273,10 +277,17 @@ static void editor_set_tile(int cx, int cy)
     g_map.modified = 1;
 }
 
-static void editor_clear_tile(int cx, int cy)
+/* ПКМ в режиме поверхностей и стен: берёт в качестве текущего тайл,
+ * лежащий в текущем выбранном слое в ячейке под курсором (пипетка);
+ * пустая ячейка выбор не меняет. */
+static void editor_pick_tile(int cx, int cy)
 {
-    g_map.layers[g_layer - 1][cy * g_map.w + cx] = 0;
-    g_map.modified = 1;
+    if (g_layer < 1 || g_layer > MAP_ASSET_LAYER)
+        return;
+    unsigned short id = g_map.layers[g_layer - 1][cy * g_map.w + cx];
+    if (id == 0)
+        return; /* пусто — брать нечего */
+    g_cur_tile = id;
 }
 
 static void editor_set_asset(int cx, int cy)
@@ -466,10 +477,12 @@ static void editor_handle_mouse(void)
 
     switch (g_mode) {
     case ED_MODE_TILES:
-        if (press)
+        /* рисование: пока ЛКМ удерживается, тайл ставится в ячейку
+         * под курсором при каждом её перемещении */
+        if (down)
             editor_set_tile(cx, cy);
         else if (rpress)
-            editor_clear_tile(cx, cy);
+            editor_pick_tile(cx, cy);
         break;
     case ED_MODE_OBJECTS:
         if (press)
@@ -526,7 +539,10 @@ static void draw_top_bar(void)
     }
     draw_string(buf, 8, 6, size1);
 
-    draw_string(g_txt_hint, 8, 6 + line_h, size2);
+    /* подсказка зависит от режима: в режиме поверхностей ЛКМ/ПКМ
+     * работают иначе (рисование и пипетка) */
+    draw_string(g_mode == ED_MODE_TILES ? g_txt_hint_tiles : g_txt_hint,
+                8, 6 + line_h, size2);
 
     /* текущий глиф справа сверху */
     int tile = current_glyph_tile();

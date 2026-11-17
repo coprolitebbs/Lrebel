@@ -66,7 +66,7 @@ int map_registry_init(const char *editor_cfg_path)
     g_assets = config_get_int(cfg, "editor", "asset_count", 30);
     if (g_assets < 0) g_assets = 0;
 
-    g_pickable = config_get_int(cfg, "objects", "pickable_count", 10);
+    g_pickable = config_get_int(cfg, "objects", "pickable_count", 13);
     if (g_pickable < 0) g_pickable = 0;
 
     const char *speed = config_get(cfg, "editor", "camera_speed", NULL);

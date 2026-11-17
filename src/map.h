@@ -65,7 +65,7 @@ enum {
 #define OBJ_TYPE_CHAR_COUNT   3
 #define OBJ_TYPE_WEAPON_FIRST 3
 
-/* Описание типа персонажа (задаётся в cfg/editor.cfg). */
+/* Описание типа персонажа (задаётся в config/editor.cfg). */
 typedef struct map_char_type {
     int  tile_row; /* строка тайлов персонажа в img/gtiles.png (с 1) */
     int  player;   /* bool: тип управляется игроком (первый = true)  */
@@ -101,7 +101,7 @@ typedef struct game_map {
     int            modified;            /* менялась ли с последнего сохранения */
 } game_map;
 
-/* --- реестр типов (cfg/editor.cfg) --- */
+/* --- реестр типов (config/editor.cfg) --- */
 
 /* Читает настройки редактора и описания типов объектов из editor_cfg_path
  * (секции {editor}, {objects}, {char1}..{char3}). При отсутствии файла или
