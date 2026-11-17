@@ -270,6 +270,17 @@ void plat_draw_rect_frame(int x, int y, int w, int h,
         SDL_RenderDrawRect(g_renderer, &inner);
 }
 
+void plat_draw_blink_frame(int x, int y, int w, int h,
+                           unsigned char r, unsigned char g, unsigned char b)
+{
+    /* период мигания 400 мс: половину такта рамка видна, половину — нет;
+     * часы платформенные (SDL_GetTicks / plat_ticks) */
+    enum { BLINK_PERIOD_MS = 400 };
+    unsigned phase = plat_ticks() % (unsigned)BLINK_PERIOD_MS;
+    if (phase < (unsigned)BLINK_PERIOD_MS / 2)
+        plat_draw_rect_frame(x, y, w, h, r, g, b);
+}
+
 unsigned int plat_ticks(void)
 {
     return SDL_GetTicks();
@@ -291,22 +302,30 @@ int plat_poll_events(void)
             g_quit_requested = 1;
             break;
         case SDL_KEYDOWN:
-            g_keys_held[ev.key.keysym.sym & KEYMAP_MASK] = 1;
+        case SDL_KEYUP: {
+            /* состояние клавиш ведётся по двум кодам: по коду символа,
+             * который даёт текущая раскладка (keysym.sym), и по коду той
+             * же физической клавиши в US-раскладке (SDL_GetKeyFromScancode).
+             * Верхний уровень проверяет held-состояние и «последнюю
+             * нажатую клавишу» по US-кодам (WASD, '1'..'4', 'i' и т.п.),
+             * поэтому управление не зависит от выбранной раскладки. */
+            int sym = (int)ev.key.keysym.sym;
+            int us  = (int)SDL_GetKeyFromScancode(ev.key.keysym.scancode);
+            g_keys_held[sym & KEYMAP_MASK] = (ev.type == SDL_KEYDOWN);
+            if (us > 0)
+                g_keys_held[us & KEYMAP_MASK] = (ev.type == SDL_KEYDOWN);
             g_key_ctrl = (ev.key.keysym.mod & KMOD_CTRL) ? 1 : 0;
             /* автоповтор не считается новым нажатием */
-            if (!ev.key.repeat) {
-                int sym = (int)ev.key.keysym.sym;
+            if (ev.type == SDL_KEYDOWN && !ev.key.repeat) {
                 /* клавиатура навигации приводится к обычным кодам,
                  * чтобы верхний уровень не зависел от SDL-констант */
-                if (sym == SDLK_KP_PLUS)  sym = '+';
-                if (sym == SDLK_KP_MINUS) sym = '-';
-                g_last_key = sym;
+                if (us == SDLK_KP_PLUS)  us = '+';
+                if (us == SDLK_KP_MINUS) us = '-';
+                if (us > 0)
+                    g_last_key = us;
             }
             break;
-        case SDL_KEYUP:
-            g_keys_held[ev.key.keysym.sym & KEYMAP_MASK] = 0;
-            g_key_ctrl = (ev.key.keysym.mod & KMOD_CTRL) ? 1 : 0;
-            break;
+        }
         case SDL_MOUSEMOTION:
             g_mouse_x = ev.motion.x;
             g_mouse_y = ev.motion.y;

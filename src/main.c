@@ -1,6 +1,7 @@
 /*
  * main.c — Lrebel, этап 2: загрузка с прогрессбаром и главное меню; этап 3:
- * редактор карт по параметру командной строки "-ed".
+ * редактор карт по параметру командной строки "-ed"; этап 4: игровой режим
+ * по параметру "-map".
  *
  * При старте последовательно загружаются конфигурационные файлы и
  * изображения (config/main.cfg, config/objects.cfg, img/font.png,
@@ -14,10 +15,14 @@
  *     кнопка закрытия с глифом-крестиком ({main_btns}, close_glyph);
  *   - запуск с "-ed" — редактор карт, минуя главное меню. Параметр
  *     "-filename map1.map" задаёт файл карты в папке maps/ (по умолчанию
- *     unnamed.map; файл создаётся при сохранении по Ctrl+S).
+ *     unnamed.map; файл создаётся при сохранении по Ctrl+S);
+ *   - запуск с "-map map1.map" — игровой режим, минуя главное меню:
+ *     "туман войны", подсчет юнитов сторон, выбор объектов мышью, окно
+ *     описания по клавише "I" (см. game.h); по ESC — выход в главное меню.
  *
- * Верхний уровень: main.c, ui.c, font.c, readconfig.c, map.c, editor.c —
- * только абстрактные функции portable_posix.h, ui.h, map.h, editor.h.
+ * Верхний уровень: main.c, ui.c, font.c, readconfig.c, map.c, editor.c,
+ * game.c, objects.c — только абстрактные функции portable_posix.h, ui.h,
+ * map.h, editor.h, game.h, objects.h.
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -30,6 +35,7 @@
 #include "ui.h"
 #include "objects.h"
 #include "editor.h"
+#include "game.h"
 
 #define CONFIG_PATH   "config/main.cfg"
 #define OBJECTS_CFG   "config/objects.cfg"
@@ -147,13 +153,17 @@ static void add_menu_buttons(const config *cfg)
 
 int main(int argc, char **argv)
 {
-    /* --- параметры командной строки: -ed и -filename map1.map --- */
+    /* --- параметры командной строки: -ed, -map и -filename --- */
     int editor_mode = 0;
+    int game_mode   = 0;
     const char *map_name = NULL;
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-ed") == 0)
             editor_mode = 1;
-        else if (strcmp(argv[i], "-filename") == 0 && i + 1 < argc)
+        else if (strcmp(argv[i], "-map") == 0 && i + 1 < argc) {
+            game_mode = 1;
+            map_name = argv[++i];
+        } else if (strcmp(argv[i], "-filename") == 0 && i + 1 < argc)
             map_name = argv[++i];
     }
 
@@ -174,8 +184,12 @@ int main(int argc, char **argv)
         fprintf(stderr, "main: продолжаю без описаний объектов\n");
 
     /* --- шаг 2: платформа --- */
-    if (plat_init(win_w, win_h,
-                  editor_mode ? "Lrebel — редактор карт" : WINDOW_TITLE) != 0) {
+    const char *win_title = WINDOW_TITLE;
+    if (editor_mode)
+        win_title = "Lrebel — редактор карт";
+    else if (game_mode)
+        win_title = "Lrebel — игра";
+    if (plat_init(win_w, win_h, win_title) != 0) {
         config_free(cfg);
         return 1;
     }
@@ -221,7 +235,7 @@ int main(int argc, char **argv)
     draw_loading_frame(0.6f);
     plat_delay_ms(load_delay);
 
-    /* --- шаг 6: главное меню или редактор карт (минуя меню) --- */
+    /* --- шаг 6: главное меню, редактор карт или игровой режим --- */
     if (editor_mode) {
         /* ресурсы редактора: config/editor.cfg, img/gtiles.png, карта */
         if (editor_init(map_name) != 0) {
@@ -237,6 +251,19 @@ int main(int argc, char **argv)
         editor_run();          /* цикл редактора до выхода */
         editor_shutdown();
     } else {
+        /* "-map": игровой режим минуя главное меню; при ошибке загрузки
+         * карты (или без "-map") открывается главное меню */
+        int game_active = game_mode && game_init(map_name) == 0;
+        if (game_active) {
+            draw_loading_frame(1.0f);
+            plat_delay_ms(load_delay);
+
+            game_run();        /* цикл игры до ESC или закрытия окна */
+            game_shutdown();   /* после игры — главное меню */
+        } else if (game_mode) {
+            fprintf(stderr, "main: карта не загружена — открываю главное меню\n");
+        }
+
         add_menu_buttons(cfg);
         draw_loading_frame(1.0f);
         plat_delay_ms(load_delay);

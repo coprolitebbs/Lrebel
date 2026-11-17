@@ -177,6 +177,13 @@ static void load_characters(const config *cfg)
         c->steps_per_turn = config_get_int(cfg, sect, "steps", 0);
         if (c->steps_per_turn < 0)
             c->steps_per_turn = 0;
+
+        /* дальность видимости: радиус раскрытия "тумана войны"; по
+         * умолчанию 12 элементов карты (CHAR_DEFAULT_VIS_RANGE) */
+        c->vis_range = config_get_int(cfg, sect, "vis_range",
+                                      CHAR_DEFAULT_VIS_RANGE);
+        if (c->vis_range < 0)
+            c->vis_range = CHAR_DEFAULT_VIS_RANGE;
     }
 }
 

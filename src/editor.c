@@ -609,7 +609,7 @@ static void draw_confirm(void)
 static void editor_draw(void)
 {
     plat_clear_screen(0, 0, 0);
-    map_draw(&g_map, &g_cam, g_tiles, 1); /* блоки видны только здесь */
+    map_draw(&g_map, &g_cam, g_tiles, NULL, 1); /* блоки видны только здесь */
     draw_top_bar();
     if (g_modal == ED_MODAL_PICKER)
         draw_picker();

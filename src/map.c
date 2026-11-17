@@ -559,7 +559,7 @@ void map_screen_to_world(const camera *c, int sx, int sy,
 }
 
 void map_draw(const game_map *m, const camera *c, const plat_image *tiles,
-              int show_blocks)
+              const unsigned char *fog, int show_blocks)
 {
     if (!m || !c || !tiles || m->w < 1 || m->h < 1)
         return;
@@ -582,12 +582,15 @@ void map_draw(const game_map *m, const camera *c, const plat_image *tiles,
     if (x1 >= m->w) x1 = m->w - 1;
     if (y1 >= m->h) y1 = m->h - 1;
 
-    /* слои от нижнего к верхнему */
+    /* слои от нижнего к верхнему; ячейки, не раскрытые из "тумана войны",
+     * не рисуются вовсе */
     for (int row = y0; row <= y1; row++) {
         int sy = (int)(((float)row - c->y) * tpx + cy);
         for (int col = x0; col <= x1; col++) {
             int sx = (int)(((float)col - c->x) * tpx + cx);
             int cell = row * m->w + col;
+            if (fog && !fog[cell])
+                continue;
             for (int layer = 0; layer < MAP_LAYERS; layer++) {
                 unsigned short id = m->layers[layer][cell];
                 if (!id)
@@ -601,11 +604,16 @@ void map_draw(const game_map *m, const camera *c, const plat_image *tiles,
         }
     }
 
-    /* объекты — всегда поверх всех слоёв карты */
+    /* объекты — всегда поверх всех слоев карты; в тумане войны не видны */
     for (int i = 0; i < m->object_count; i++) {
         const map_object *o = &m->objects[i];
         int tile = map_object_tile(o->type, o->dir);
         if (tile < 0)
+            continue;
+        int ocx = (int)floorf(o->x), ocy = (int)floorf(o->y);
+        if (ocx < 0 || ocy < 0 || ocx >= m->w || ocy >= m->h)
+            continue;
+        if (fog && !fog[ocy * m->w + ocx])
             continue;
         int sx = (int)((o->x - c->x) * tpx + cx);
         int sy = (int)((o->y - c->y) * tpx + cy);
