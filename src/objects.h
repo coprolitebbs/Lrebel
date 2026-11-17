@@ -20,6 +20,13 @@
  *   reload_turns=Время перезарядки в ходах (только оружие)
  *   magazine_size=Размер магазина (только оружие)
  *   weight=Вес одной единицы, кг
+ *   inv_size_x / inv_size_y — линейные размеры предмета в инвентаре в
+ *              клетках (по умолчанию: оружие — 1x2, боеприпасы, аптечка
+ *              и поверапы — 1x1);
+ *   inv_img_row / inv_img_col — ряд и колонка тайла-картинки предмета в
+ *              инвентаре в img/gtiles.png (по умолчанию — первый тайл
+ *              объекта: ряд 4, колонка N); при загрузке из них
+ *              вычисляется пиксельный прямоугольник inv_img_*.
  *
  * Типы персонажей (фракции) описываются секциями {char_type1}..{char_type3}
  * (name, control=player|cpu), конкретные персонажи — секциями {characterN}:
@@ -46,6 +53,10 @@
  * "тумана войны" вокруг юнита, элементов карты). */
 #define CHAR_DEFAULT_VIS_RANGE 12
 
+/* Ряд img/gtiles.png, в котором лежат тайлы подбираемых объектов
+ * (по умолчанию картинка предмета в инвентаре — его первый тайл). */
+#define OBJECT_INV_IMG_ROW 4
+
 /* Класс подбираемого объекта. */
 typedef enum {
     OBJ_CLASS_WEAPON = 0, /* оружие             */
@@ -54,6 +65,16 @@ typedef enum {
     OBJ_CLASS_POWERUP,    /* поверап иного типа */
     OBJ_CLASS_COUNT
 } object_class;
+
+/* Линейные размеры предмета в инвентаре по умолчанию (в клетках сетки
+ * 15x15): оружие — 1x2, боеприпасы, аптечка и поверапы — 1x1; в
+ * config/objects.cfg переопределяется ключами inv_size_x/inv_size_y. */
+#define OBJECT_INV_SIZE_LIGHT_X 1 /* легкое оружие (пистолеты, ПП)      */
+#define OBJECT_INV_SIZE_LIGHT_Y 2
+#define OBJECT_INV_SIZE_HEAVY_X 1 /* тяжелое оружие (винтовки, пулеметы)*/
+#define OBJECT_INV_SIZE_HEAVY_Y 3
+#define OBJECT_INV_SIZE_SMALL_X 1 /* боеприпас, аптечка, поверап        */
+#define OBJECT_INV_SIZE_SMALL_Y 1
 
 /* Описание подбираемого/бросаемого объекта (config/objects.cfg). */
 typedef struct game_object_desc {
@@ -66,6 +87,14 @@ typedef struct game_object_desc {
     int          reload_turns; /* время перезарядки, ходов (оружие)         */
     int          magazine_size; /* размер магазина (оружие)                 */
     float        weight_kg;  /* вес одной единицы, кг                       */
+    /* --- инвентарь --- */
+    int inventory_size_x; /* горизонтальный размер предмета в клетках        */
+    int inventory_size_y; /* вертикальный размер предмета в клетках          */
+    /* Картинка предмета в инвентаре — прямоугольник в общем атласе тайлов
+     * img/gtiles.png, пиксели. Пока это первый тайл объекта (ряд 4, колонка
+     * N); нормальные картинки будут нарисованы позже и вписаны в конфиг
+     * ключами inv_img_row/inv_img_col. */
+    int inv_img_x, inv_img_y, inv_img_w, inv_img_h;
 } game_object_desc;
 
 /* Фракция (тип персонажа); названия и флаг player — в config/objects.cfg. */

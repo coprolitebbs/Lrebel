@@ -12,6 +12,8 @@
 
 #include "readconfig.h"
 #include "utf8_win1251.h"
+#include "map.h"      /* MAP_TILES_PER_ROW, MAP_TILE_PX — геометрия атласа */
+#include "inventory.h" /* INVENTORY_SIZE — предел размеров предмета        */
 #include "objects.h"
 
 /* ------------------------------------------------------------ хранилище */
@@ -55,6 +57,25 @@ static object_class class_from_str(const char *s)
 static int default_max_count(object_class cls)
 {
     return cls == OBJ_CLASS_AMMO ? 20 : 1;
+}
+
+/* Линейные размеры предмета в инвентаре по умолчанию (в клетках):
+ * оружие — 1x2 (легкое) и 1x3 (тяжелое — от 3 кг), боеприпас, аптечка
+ * и поверап — 1x1; ключи inv_size_x/inv_size_y переопределяют. */
+static void default_inv_size(const game_object_desc *o, int *sx, int *sy)
+{
+    if (o->cls == OBJ_CLASS_WEAPON) {
+        if (o->weight_kg >= 3.0f) {
+            *sx = OBJECT_INV_SIZE_HEAVY_X;
+            *sy = OBJECT_INV_SIZE_HEAVY_Y;
+        } else {
+            *sx = OBJECT_INV_SIZE_LIGHT_X;
+            *sy = OBJECT_INV_SIZE_LIGHT_Y;
+        }
+    } else {
+        *sx = OBJECT_INV_SIZE_SMALL_X;
+        *sy = OBJECT_INV_SIZE_SMALL_Y;
+    }
 }
 
 static int sex_from_str(const char *s)
@@ -126,6 +147,37 @@ static void load_objects(const config *cfg)
         o->weight_kg = config_get_float(cfg, sect, "weight", 0.0f);
         if (o->weight_kg < 0.0f)
             o->weight_kg = 0.0f;
+
+        /* линейные размеры предмета в инвентаре (в клетках) */
+        default_inv_size(o, &o->inventory_size_x, &o->inventory_size_y);
+        o->inventory_size_x =
+            config_get_int(cfg, sect, "inv_size_x", o->inventory_size_x);
+        o->inventory_size_y =
+            config_get_int(cfg, sect, "inv_size_y", o->inventory_size_y);
+        if (o->inventory_size_x < 1)
+            o->inventory_size_x = 1;
+        if (o->inventory_size_y < 1)
+            o->inventory_size_y = 1;
+        if (o->inventory_size_x > INVENTORY_SIZE)
+            o->inventory_size_x = INVENTORY_SIZE;
+        if (o->inventory_size_y > INVENTORY_SIZE)
+            o->inventory_size_y = INVENTORY_SIZE;
+
+        /* картинка предмета в инвентаре: прямоугольник первого тайла
+         * объекта в общем атласе img/gtiles.png; в конфиге можно задать
+         * другой тайл ключами inv_img_row/inv_img_col (позже сюда впишем
+         * нарисованные картинки предметов) */
+        int img_col = config_get_int(cfg, sect, "inv_img_col", g_object_count);
+        int img_row = config_get_int(cfg, sect, "inv_img_row",
+                                     OBJECT_INV_IMG_ROW);
+        if (img_col < 1)
+            img_col = 1;
+        if (img_row < 1)
+            img_row = 1;
+        o->inv_img_x = (img_col - 1) * MAP_TILE_PX;
+        o->inv_img_y = (img_row - 1) * MAP_TILE_PX;
+        o->inv_img_w = MAP_TILE_PX;
+        o->inv_img_h = MAP_TILE_PX;
     }
 }
 

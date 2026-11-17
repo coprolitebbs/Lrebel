@@ -152,6 +152,11 @@ int  map_save(const game_map *m, const char *path);
 int  map_cell_occupied(const game_map *m, int cx, int cy);
 /* Добавляет объект в ячейку; -1, если ячейка занята или объектов 256. */
 int  map_object_add(game_map *m, int type, float x, float y, int dir);
+/* Индекс объекта, стоящего в ячейке (cx, cy), или -1, если ячейка пуста. */
+int  map_object_index_at(const game_map *m, int cx, int cy);
+/* Удаляет объект по индексу (индексы объектов после него сдвигаются);
+ * возвращает 1, если удален. */
+int  map_object_remove_index(game_map *m, int index);
 /* Удаляет объект, стоящий в ячейке; возвращает 1, если удалён. */
 int  map_object_remove_at(game_map *m, int cx, int cy);
 

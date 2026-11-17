@@ -449,12 +449,19 @@ int map_save(const game_map *m, const char *path)
 
 int map_cell_occupied(const game_map *m, int cx, int cy)
 {
+    return map_object_index_at(m, cx, cy) >= 0;
+}
+
+int map_object_index_at(const game_map *m, int cx, int cy)
+{
+    if (!m)
+        return -1;
     for (int i = 0; i < m->object_count; i++) {
         const map_object *o = &m->objects[i];
         if ((int)floorf(o->x) == cx && (int)floorf(o->y) == cy)
-            return 1;
+            return i;
     }
-    return 0;
+    return -1;
 }
 
 int map_object_add(game_map *m, int type, float x, float y, int dir)
@@ -474,18 +481,22 @@ int map_object_add(game_map *m, int type, float x, float y, int dir)
     return m->object_count - 1;
 }
 
+int map_object_remove_index(game_map *m, int index)
+{
+    if (!m || index < 0 || index >= m->object_count)
+        return 0;
+    memmove(&m->objects[index], &m->objects[index + 1],
+            (size_t)(m->object_count - index - 1) * sizeof(map_object));
+    m->object_count--;
+    return 1;
+}
+
 int map_object_remove_at(game_map *m, int cx, int cy)
 {
-    for (int i = 0; i < m->object_count; i++) {
-        map_object *o = &m->objects[i];
-        if ((int)floorf(o->x) == cx && (int)floorf(o->y) == cy) {
-            memmove(&m->objects[i], &m->objects[i + 1],
-                    (size_t)(m->object_count - i - 1) * sizeof(map_object));
-            m->object_count--;
-            return 1;
-        }
-    }
-    return 0;
+    int idx = map_object_index_at(m, cx, cy);
+    if (idx < 0)
+        return 0;
+    return map_object_remove_index(m, idx);
 }
 
 /* ------------------------------------------------------- камера */
