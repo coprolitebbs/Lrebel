@@ -127,9 +127,15 @@ int plat_screen_height(void)
 
 /* ------------------------------------------------------------- изображения */
 
-plat_image *plat_load_image(const char *path)
+/* Общая загрузка PNG: декодирование stb_image сразу в RGBA, затем
+ * создание текстуры. Если key_r >= 0, пиксели цвета (key_r,key_g,key_b)
+ * получают нулевую альфу (color key): при отрисовке они пропускаются,
+ * и сквозь них просвечивает предыдущий слой кадра. */
+static plat_image *load_image_rgba(const char *path,
+                                   int key_r, int key_g, int key_b)
 {
-    if (!path) return NULL;
+    if (!path)
+        return NULL;
 
     /* файл целиком читается абстрактными функциями платформы */
     plat_file *f = plat_file_open_read(path);
@@ -161,6 +167,17 @@ plat_image *plat_load_image(const char *path)
         return NULL;
     }
 
+    /* color key: точное совпадение цвета -> альфа 0 */
+    if (key_r >= 0) {
+        unsigned char kr = (unsigned char)key_r;
+        unsigned char kg = (unsigned char)key_g;
+        unsigned char kb = (unsigned char)key_b;
+        unsigned char *p = pixels;
+        for (int i = 0; i < w * h; i++, p += 4)
+            if (p[0] == kr && p[1] == kg && p[2] == kb)
+                p[3] = 0;
+    }
+
     SDL_Surface *surf = SDL_CreateRGBSurfaceWithFormatFrom(
         pixels, w, h, 32, w * 4, SDL_PIXELFORMAT_RGBA32);
     if (!surf) {
@@ -175,6 +192,9 @@ plat_image *plat_load_image(const char *path)
         fprintf(stderr, "plat_load_image: '%s': texture: %s\n", path, SDL_GetError());
         return NULL;
     }
+    /* альфа-перемешивание явно: прозрачные (color key) пиксели рисуются
+     * через SDL_BLENDMODE_BLEND на всех платформах одинаково */
+    SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_BLEND);
 
     plat_image *img = (plat_image *)calloc(1, sizeof(*img));
     if (!img) {
@@ -185,6 +205,18 @@ plat_image *plat_load_image(const char *path)
     img->w = w;
     img->h = h;
     return img;
+}
+
+plat_image *plat_load_image(const char *path)
+{
+    return load_image_rgba(path, -1, -1, -1);
+}
+
+plat_image *plat_load_image_colorkey(const char *path,
+                                     unsigned char r, unsigned char g,
+                                     unsigned char b)
+{
+    return load_image_rgba(path, r, g, b);
 }
 
 void plat_free_image(plat_image *img)

@@ -25,6 +25,16 @@ void        plat_free_image(plat_image *img);
 int         plat_image_width(const plat_image *img);
 int         plat_image_height(const plat_image *img);
 
+/* Загружает изображение (PNG) с цветовым ключом (color key): все пиксели
+ * цвета (r,g,b) становятся прозрачными и при отрисовке пропускаются —
+ * сквозь них просвечивает то, что нарисовано на кадре раньше (предыдущий
+ * слой). Так задан фон тайлов img/gtiles.png (чистый чёрный). Остальные
+ * цвета, включая полупрозрачность самой картинки, не меняются.
+ * NULL при ошибке. */
+plat_image *plat_load_image_colorkey(const char *path,
+                                     unsigned char r, unsigned char g,
+                                     unsigned char b);
+
 /* ---------------------------------------------------------------- экран */
 
 /* Текущее разрешение окна/экрана в пикселях. */

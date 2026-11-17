@@ -621,7 +621,10 @@ int editor_init(const char *map_filename)
     if (map_registry_init(EDITOR_CFG) != 0)
         return -1;
 
-    g_tiles = plat_load_image(GTILES_PATH);
+    /* тайлы загружаются с color key: чёрный фон тайловых листов (стены,
+     * объекты, ассеты) прозрачен, и сквозь него просвечивает предыдущий
+     * слой карты */
+    g_tiles = plat_load_image_colorkey(GTILES_PATH, 0, 0, 0);
     if (!g_tiles) {
         fprintf(stderr, "editor: не удалось загрузить '%s'\n", GTILES_PATH);
         return -1;
