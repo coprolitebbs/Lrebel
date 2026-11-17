@@ -3,8 +3,9 @@
  * редактор карт по параметру командной строки "-ed".
  *
  * При старте последовательно загружаются конфигурационные файлы и
- * изображения (config/main.cfg, img/font.png, config/windows.cfg,
- * img/windows.png); каждый шаг обновляет прогрессбар. После загрузки:
+ * изображения (config/main.cfg, config/objects.cfg, img/font.png,
+ * config/windows.cfg, img/windows.png); каждый шаг обновляет прогрессбар.
+ * После загрузки:
  *   - обычный запуск — главное меню: типовое окно на весь экран как фон,
  *     строка title (секция {main}, параметр title) вверху экрана и внизу
  *     две кнопки — «Новая игра» (секция {main_btns}, параметр play_button,
@@ -27,9 +28,11 @@
 #include "utf8_win1251.h"
 #include "font.h"
 #include "ui.h"
+#include "objects.h"
 #include "editor.h"
 
 #define CONFIG_PATH   "config/main.cfg"
+#define OBJECTS_CFG   "config/objects.cfg"
 #define WINDOWS_CFG   "config/windows.cfg"
 #define FONT_PATH     "img/font.png"
 #define WINDOW_TITLE  "Lrebel"
@@ -165,6 +168,10 @@ int main(int argc, char **argv)
     int win_w = config_get_int(cfg, "main", "width",  DEFAULT_WIN_W);
     int win_h = config_get_int(cfg, "main", "height", DEFAULT_WIN_H);
     int load_delay = config_get_int(cfg, "main", "load_step_delay_ms", 150);
+
+    /* --- шаг 1b: описания объектов (config/objects.cfg) --- */
+    if (objects_load(OBJECTS_CFG) != 0)
+        fprintf(stderr, "main: продолжаю без описаний объектов\n");
 
     /* --- шаг 2: платформа --- */
     if (plat_init(win_w, win_h,

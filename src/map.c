@@ -25,15 +25,15 @@
 /* ------------------------------------------------------------ реестр */
 
 map_char_type map_char_types[OBJ_TYPE_CHAR_COUNT] = {
-    { 1, 1 }, /* первый персонаж управляется игроком */
-    { 2, 0 },
-    { 3, 0 }
+    { 1, 1, 1 }, /* первый персонаж управляется игроком */
+    { 2, 1, 0 },
+    { 3, 1, 0 }  /* тайлы анимации начинаются с колонки 1 (title_col=1) */
 };
 
 static int   g_def_w = MAP_MAX_SIZE, g_def_h = MAP_MAX_SIZE;
 static int   g_vis = 32;
 static float g_camera_speed = 8.0f;
-static int   g_pickable = 10;
+static int   g_pickable = 15;
 static int   g_assets = 30;
 
 static int bool_from_str(const char *s)
@@ -66,7 +66,7 @@ int map_registry_init(const char *editor_cfg_path)
     g_assets = config_get_int(cfg, "editor", "asset_count", 30);
     if (g_assets < 0) g_assets = 0;
 
-    g_pickable = config_get_int(cfg, "objects", "pickable_count", 13);
+    g_pickable = config_get_int(cfg, "objects", "pickable_count", 15);
     if (g_pickable < 0) g_pickable = 0;
 
     const char *speed = config_get(cfg, "editor", "camera_speed", NULL);
@@ -83,6 +83,10 @@ int map_registry_init(const char *editor_cfg_path)
             config_get_int(cfg, sect, "tile_row", i + 1);
         if (map_char_types[i].tile_row < 1)
             map_char_types[i].tile_row = i + 1;
+        map_char_types[i].title_col =
+            config_get_int(cfg, sect, "title_col", 1);
+        if (map_char_types[i].title_col < 1)
+            map_char_types[i].title_col = 1;
         map_char_types[i].player =
             bool_from_str(config_get(cfg, sect, "player",
                                      i == 0 ? "true" : "false"));
@@ -111,9 +115,9 @@ int map_object_tile(int type, int dir)
 {
     if (type >= OBJ_TYPE_CHAR_FIRST &&
         type < OBJ_TYPE_CHAR_FIRST + OBJ_TYPE_CHAR_COUNT) {
-        int row = map_char_types[type].tile_row;
+        const map_char_type *t = &map_char_types[type];
         int d = (dir >= 0 && dir < OBJ_DIR_COUNT) ? dir : OBJ_DIR_DOWN;
-        return MAP_TILE_ID(row, d + 1);
+        return MAP_TILE_ID(t->tile_row, t->title_col + d);
     }
     if (type >= OBJ_TYPE_WEAPON_FIRST &&
         type < OBJ_TYPE_WEAPON_FIRST + g_pickable)
