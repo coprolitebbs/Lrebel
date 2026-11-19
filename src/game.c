@@ -77,6 +77,7 @@ static char g_fmt_commander[64];    /* "Командир: %s"                   
 static char g_txt_yes[16], g_txt_no[16]; /* "да"/"нет"                     */
 static char g_txt_class[OBJ_CLASS_COUNT][32]; /* "Тип: оружие" и т.п.     */
 static char g_txt_btn_close[16];    /* глиф-крестик окна описания          */
+static char g_txt_btn_end_turn[32]; /* надпись кнопки "Завершить ход"      */
 
 static void init_strings(void)
 {
@@ -117,6 +118,8 @@ static void init_strings(void)
     utf8_to_win1251("Тип: поверап", g_txt_class[OBJ_CLASS_POWERUP],
                     sizeof(g_txt_class[0]));
     utf8_to_win1251("X", g_txt_btn_close, sizeof(g_txt_btn_close));
+    utf8_to_win1251("Завершить ход", g_txt_btn_end_turn,
+                    sizeof(g_txt_btn_end_turn));
 }
 
 /* ------------------------------------------------------------ юниты/стороны */
@@ -208,12 +211,45 @@ static void game_count_units(void)
     }
 }
 
+/* ------------------------------------------------------------- HUD */
+
+static int g_btn_info_close = -1;   /* крестик окна описания               */
+static int g_btn_end_turn   = -1;   /* кнопка "Завершить ход" в HUD        */
+
+/* Высота панели HUD — 20% высоты экрана. */
+static int hud_height(void)
+{
+    return plat_screen_height() / 5;
+}
+
+/* (Пере)создание кнопки "Завершить ход" в правом нижнем углу панели
+ * HUD (скин {hud_button} из config/windows.cfg). Пока без обработчика —
+ * механику ходов возьмем из Rebel Star для DOS позже. Кнопка
+ * пересоздается после каждого ui_buttons_clear, потому что окно
+ * описания очищает общий массив кнопок. */
+static void hud_add_end_turn_button(void)
+{
+    int sw = plat_screen_width();
+    int sh = plat_screen_height();
+    int hh = hud_height();
+    int bw = sw / 4;             /* ширина: четверть экрана               */
+    int bh = hh * 3 / 8;         /* высота: 3/8 высоты панели             */
+    int bx = sw - bw - hh / 8;   /* отступ от правого края                */
+    int by = sh - bh - hh / 16;  /* у нижнего края панели HUD             */
+    g_btn_end_turn = ui_button_add(bx, by, bw, bh, g_txt_btn_end_turn, NULL);
+    if (g_btn_end_turn >= 0)
+        ui_button_set_skin(g_btn_end_turn, UI_SKIN_HUD);
+}
+
 /* ------------------------------------------------- окно описания объекта */
 
 static void info_close(void)
 {
     g_info_open = 0;
     ui_buttons_clear();
+    g_btn_info_close = -1;
+    hud_add_end_turn_button(); /* кнопка HUD восстанавливается после
+                                * очистки общего массива кнопок */
 }
 
 static void cb_info_close(void)
@@ -225,16 +261,19 @@ static void info_open(void)
 {
     g_info_open = 1;
     ui_buttons_clear();
+    g_btn_end_turn = -1;
 
     /* крестик-кнопка закрытия в правом верхнем углу окна описания */
     int sw = plat_screen_width();
     int csz = 44;                     /* размер кнопки, пикселей */
     int wx = sw / 2;
     int ww = sw - wx;
-    int idx = ui_button_add(wx + ww - csz - 12, 12, csz, csz, "",
-                            cb_info_close);
-    if (idx >= 0)
-        ui_button_set_glyph(idx, g_txt_btn_close);
+    g_btn_info_close = ui_button_add(wx + ww - csz - 12, 12, csz, csz, "",
+                                     cb_info_close);
+    if (g_btn_info_close >= 0)
+        ui_button_set_glyph(g_btn_info_close, g_txt_btn_close);
+
+    hud_add_end_turn_button(); /* кнопка HUD пересоздана после очистки */
 }
 
 /* ------------------------------------------------------------- выбор мышью */
@@ -319,8 +358,12 @@ static void game_handle_mouse(void)
     int window_open = g_info_open;   /* окно открыто на начало кадра */
     int sel_old     = g_selected;
 
-    /* кнопки окна описания (крестик) обрабатываются первыми */
-    ui_buttons_process_ext(press, release, down);
+    /* кнопки окна описания (крестик) и HUD обрабатываются первыми;
+     * процессинг сообщает, пришлось ли нажатие на кнопку — такой клик
+     * не выбирает и не снимает объект под кнопкой ("Завершить ход",
+     * крестик окна) */
+    if (ui_buttons_process_ext(press, release, down))
+        return;
 
     /* открытое окно инвентаря (левая половина) забирает мышь целиком:
      * внутри него — выбор и перетаскивание предметов инвентаря */
@@ -349,7 +392,8 @@ static void game_handle_mouse(void)
 
 /* ------------------------------------------------------------- отрисовка */
 
-static void draw_top_bar(void)
+/* Статусные строки (ход, юниты, выбор, подсказка) — внутри панели HUD. */
+static void draw_status_lines(int x, int y0)
 {
     int sh = plat_screen_height();
     char buf[256];
@@ -360,11 +404,11 @@ static void draw_top_bar(void)
 
     snprintf(buf, sizeof(buf), g_fmt_turn,
              g_turn == GAME_SIDE_PLAYER ? g_txt_turn_player : g_txt_turn_cpu);
-    draw_string(buf, 8, 6, size1);
+    draw_string(buf, x, y0, size1);
 
     snprintf(buf, sizeof(buf), g_fmt_units,
              g_units[GAME_SIDE_PLAYER], g_units[GAME_SIDE_CPU]);
-    draw_string(buf, 8, 6 + line_h, size1);
+    draw_string(buf, x, y0 + line_h, size1);
 
     const char *name = NULL;
     if (g_selected >= 0 && g_selected < g_map.object_count) {
@@ -380,11 +424,31 @@ static void draw_top_bar(void)
     }
     if (name) {
         snprintf(buf, sizeof(buf), g_fmt_selected, name);
-        draw_string(buf, 8, 6 + 2 * line_h, size2);
-        draw_string(g_txt_hint, 8, 6 + 3 * line_h, size2);
+        draw_string(buf, x, y0 + 2 * line_h, size2);
+        draw_string(g_txt_hint, x, y0 + 3 * line_h, size2);
     } else {
-        draw_string(g_txt_hint, 8, 6 + 2 * line_h, size2);
+        draw_string(g_txt_hint, x, y0 + 2 * line_h, size2);
     }
+}
+
+/* Панель HUD внизу экрана (20% высоты, киберпанк-скин {hud} из
+ * img/windows.png + config/windows.cfg): статусные строки слева,
+ * кнопка "Завершить ход" в правом нижнем углу (пока без функции). */
+static void draw_hud(void)
+{
+    int sh = plat_screen_height();
+    int hh = hud_height();
+    int hy = sh - hh;
+
+    ui_hud_window_draw(0, hy, plat_screen_width(), hh);
+    draw_status_lines(16, hy + 12);
+
+    /* кнопка HUD: общий ui_buttons_draw() вызывается только в окне
+     * описания (чтобы не рисовать кнопку HUD поверх модальных окон),
+     * поэтому здесь она рисуется отдельно */
+    if (g_btn_end_turn >= 0 && g_btn_end_turn < ui_buttons_count &&
+        ui_buttons[g_btn_end_turn].enabled)
+        ui_button_draw(&ui_buttons[g_btn_end_turn]);
 }
 
 /* Тайл персонажа 128x128 в окне описания — по состоянию здоровья:
@@ -514,7 +578,9 @@ static void draw_info_window(void)
     }
 
     /* крестик-кнопка закрытия добавлена в info_open() */
-    ui_buttons_draw();
+    if (g_btn_info_close >= 0 && g_btn_info_close < ui_buttons_count &&
+        ui_buttons[g_btn_info_close].enabled)
+        ui_button_draw(&ui_buttons[g_btn_info_close]);
 }
 
 static void game_draw(void)
@@ -526,7 +592,6 @@ static void game_draw(void)
 
     /* карта и объекты; в тумане войны игрока ничего не рисуется */
     map_draw(&g_map, &g_cam, g_tiles, g_fog[GAME_SIDE_PLAYER], 0);
-    draw_top_bar();
 
     /* мигающая рамка выделенного объекта: светло-синяя у юнитов игрока,
      * зеленая у прочих объектов (юниты противника, предметы) */
@@ -544,6 +609,11 @@ static void game_draw(void)
         }
         plat_draw_blink_frame(sx - 2, sy - 2, tpi + 4, tpi + 4, cr, cg, cb);
     }
+
+    /* панель HUD внизу экрана — поверх карты, до модальных окон:
+     * окно описания (правая половина) и инвентарь (левая половина)
+     * перекрывают панель в своих зонах, как и верхнюю строку раньше */
+    draw_hud();
 
     if (g_info_open)
         draw_info_window();
@@ -642,6 +712,10 @@ int game_init(const char *map_filename)
     g_info_open = 0;
     g_quit = 0;
     init_strings();
+
+    /* кнопка "Завершить ход" в панели HUD (пересоздается и в
+     * info_open — окно описания очищает общий массив кнопок) */
+    hud_add_end_turn_button();
 
     fprintf(stderr, "game: карта '%s' (%dx%d); юниты: игрок %d, "
                     "компьютер %d\n", g_map_path, g_map.w, g_map.h,

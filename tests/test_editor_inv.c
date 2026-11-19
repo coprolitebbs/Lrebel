@@ -23,7 +23,8 @@
  *     клик по "Командир" переключает флаг;
  *   - боевые параметры и инвентарь персонажа сохраняются в файл карты и
  *     загружаются из него (roundtrip; формат v2 LRM2), старый формат v1
- *     (LRM1, maps/map1.map) читается — параметры генерируются дефолтными.
+ *     (LRM1, tests/testdata_map1_v1.h) читается — параметры генерируются
+ *     дефолтными; карта репозитория maps/map1.map (v2) читается.
  *
  * Сборка (из корня репозитория):
  *   cc -std=c99 -O2 -Wall -I<SDL2 inc> -I<x86 inc> -Isrc \
@@ -61,6 +62,8 @@ static int params_row_y(int idx)
 #include "portable_posix.c" /* доступ к g_renderer (чтение пикселей)      */
 #include "editor.c"         /* доступ к g_map/g_selected/g_modal/g_param_sel */
 #undef static
+
+#include "testdata_map1_v1.h" /* карта v1 (LRM1) для сценария 16           */
 
 #define TEST_MAP_PATH "/tmp/lrebel_invtest.map"
 
@@ -458,9 +461,16 @@ int main(void)
     {
         game_map m3;
         memset(&m3, 0, sizeof(m3));
-        /* maps/map1.map — карта репозитория в старом формате v1: у
-         * персонажей параметры генерируются дефолтными, инвентари пусты */
-        assert(map_load(&m3, "maps/map1.map") == 0);
+        /* карта в старом формате v1 (LRM1) из истории репозитория
+         * (tests/testdata_map1_v1.h): у персонажей параметры
+         * генерируются дефолтными, инвентари пусты. Сам maps/map1.map
+         * пересохранен в формате v2 и проверяется отдельно ниже */
+        FILE *f = fopen("/tmp/lrebel_v1.map", "wb");
+        assert(f);
+        assert(fwrite(TESTDATA_MAP1_V1, 1, sizeof(TESTDATA_MAP1_V1), f) ==
+               sizeof(TESTDATA_MAP1_V1));
+        fclose(f);
+        assert(map_load(&m3, "/tmp/lrebel_v1.map") == 0);
         for (int i = 0; i < m3.object_count; i++)
             if (m3.objects[i].type == OBJ_TYPE_CHAR_FIRST) {
                 assert(m3.objects[i].stats.speed > 0);
@@ -469,6 +479,18 @@ int main(void)
                 assert(m3.inventories[i] == NULL);
             }
         map_free(&m3);
+        remove("/tmp/lrebel_v1.map");
+    }
+
+    printf("== 17. карта репозитория maps/map1.map (v2) читается ==\n");
+    {
+        /* maps/map1.map пересохранен редактором в новом формате v2:
+         * достаточно того, что он читается и объекты на месте */
+        game_map m4;
+        memset(&m4, 0, sizeof(m4));
+        assert(map_load(&m4, "maps/map1.map") == 0);
+        assert(m4.object_count >= 0);
+        map_free(&m4);
     }
 
     editor_shutdown();

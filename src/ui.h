@@ -10,7 +10,10 @@
  *
  * Графика кнопок, окон и прогрессбара берётся 9-срезами из единого
  * изображения img/windows.png; координаты и размеры элементов задаются
- * в config/windows.cfg (без хардкода в коде).
+ * в config/windows.cfg (без хардкода в коде). Кроме типовых элементов
+ * есть отдельный киберпанк-скин для HUD: окно ({hud}) и кнопка
+ * «Завершить ход» ({hud_button}, {hud_button_pressed}); кнопка
+ * переключается на него через ui_button_set_skin.
  *
  * Модуль работает только через абстрактные функции нижнего уровня
  * (portable_posix.h) и шрифт (font.h).
@@ -24,6 +27,10 @@
 
 typedef void (*ui_callback)(void);
 
+/* Скины кнопок: типовой (по умолчанию в ui_button_add) и HUD. */
+#define UI_SKIN_DEFAULT 0
+#define UI_SKIN_HUD     1
+
 typedef struct ui_button {
     int x, y, w, h;                      /* прямоугольник кнопки на экране */
     char caption[UI_BUTTON_CAPTION_MAX]; /* надпись (Windows-1251) */
@@ -32,6 +39,8 @@ typedef struct ui_button {
     ui_callback on_press;                /* функция, запускаемая по нажатию */
     int enabled;                         /* 1 — отрисовывается и реагирует */
     int pressed;                         /* визуальное состояние нажатия */
+    int skin;                            /* скин 9-срезов: UI_SKIN_DEFAULT
+                                            или UI_SKIN_HUD */
 } ui_button;
 
 /* Массив всех кнопок игры. */
@@ -41,7 +50,8 @@ extern int       ui_buttons_count;
 /* --- скин (img/windows.png + config/windows.cfg) --- */
 
 /* Загружает скин: читает конфиг windows_cfg_path (секции {skin},
- * {button}, {button_pressed}, {window}, {progressbar}) и изображение.
+ * {button}, {button_pressed}, {window}, {progressbar}, {hud},
+ * {hud_button}, {hud_button_pressed}) и изображение.
  * Возвращает 0 при успехе, -1 при ошибке. */
 int  ui_init(const char *windows_cfg_path);
 
@@ -59,6 +69,10 @@ int  ui_button_add(int x, int y, int w, int h,
  * когда caption пуст (например, крестик закрытия окна). */
 void ui_button_set_glyph(int index, const char *glyph_1251);
 
+/* Задает скин кнопки: UI_SKIN_DEFAULT (типовой) или UI_SKIN_HUD
+ * (кнопка «Завершить ход» и другие элементы HUD). */
+void ui_button_set_skin(int index, int skin);
+
 /* Отрисовка отдельной кнопки по её состоянию (enabled/pressed). */
 void ui_button_draw(const ui_button *btn);
 
@@ -67,15 +81,20 @@ void ui_button_draw(const ui_button *btn);
 int  ui_button_check_press(const ui_button *btn);
 
 /* Обработка всех кнопок: опрос мыши, визуальное нажатие, вызов
- * on_press при клике. Вызывать ОДИН раз за кадр до отрисовки. */
-void ui_buttons_process(void);
+ * on_press при клике. Вызывать ОДИН раз за кадр до отрисовки.
+ * Возвращает 1, если нажатие левой кнопки мыши пришлось внутрь
+ * какой-либо отрисовываемой кнопки (клик «съеден» кнопкой). */
+int ui_buttons_process(void);
 
 /* То же, но фронты левой кнопки мыши передаёт вызывающий код — для
  * случаев, когда кадр читает их сам (редактор карт: свои клики плюс
  * кнопки модальных окон). Значения — те же, что возвращают
- * plat_mouse_left_pressed/released/down за этот кадр. */
-void ui_buttons_process_ext(int left_pressed, int left_released,
-                            int left_down);
+ * plat_mouse_left_pressed/released/down за этот кадр. Возвращает 1,
+ * если нажатие пришлось внутрь какой-либо отрисовываемой кнопки
+ * (в т.ч. когда нажатие и отпускание пришли в одном кадре — флаг
+ * pressed к моменту возврата уже сброшен). */
+int ui_buttons_process_ext(int left_pressed, int left_released,
+                           int left_down);
 
 /* Удаляет все кнопки (массив очищается). */
 void ui_buttons_clear(void);
@@ -87,6 +106,11 @@ void ui_buttons_draw(void);
 
 /* Типовое информационное окно (рамка + полупрозрачный фон-паттерн). */
 void ui_window_draw(int x, int y, int w, int h);
+
+/* Окно HUD (киберпанк-скин из секции {hud} config/windows.cfg): та же
+ * схема «рамка + фон-паттерн», но другими тайлами; если секции {hud}
+ * в конфиге нет — рисуется типовыми тайлами. */
+void ui_hud_window_draw(int x, int y, int w, int h);
 
 /* Прогрессбар; fraction — заполнение 0.0..1.0. */
 void ui_progressbar_draw(int x, int y, int w, int h, float fraction);

@@ -56,6 +56,10 @@ static ui_rect g_button[P_COUNT];        /* обычная кнопка */
 static ui_rect g_button_pressed[P_COUNT]; /* нажатая кнопка */
 static ui_rect g_win[P_COUNT];           /* типовое окно */
 static ui_rect g_win_bg;                 /* паттерн фона окна */
+static ui_rect g_hud[P_COUNT];           /* окно HUD (киберпанк) */
+static ui_rect g_hud_bg;                 /* паттерн фона окна HUD */
+static ui_rect g_hud_btn[P_COUNT];       /* кнопка HUD */
+static ui_rect g_hud_btn_pressed[P_COUNT]; /* нажатая кнопка HUD */
 static ui_rect g_pb_start, g_pb_end, g_pb_fill, g_pb_track;
 
 static int parse_rect(const char *s, ui_rect *r)
@@ -104,6 +108,13 @@ static int load_pieces(const config *cfg, const char *path,
     return 0;
 }
 
+/* Есть ли секция со срезами в конфиге (ключ corner_tl как маркер):
+ * HUD-секции необязательны — при их отсутствии берутся типовые. */
+static int has_pieces(const config *cfg, const char *section)
+{
+    return config_get(cfg, section, "corner_tl", NULL) != NULL;
+}
+
 static int rect_ok(const ui_rect *r, const plat_image *img)
 {
     return r->w > 0 && r->h > 0 &&
@@ -141,6 +152,32 @@ int ui_init(const char *windows_cfg_path)
         if (load_rect(cfg, windows_cfg_path, "window", "bg_pattern",
                       &g_win_bg) != 0)
             break;
+        /* HUD-скин (окно HUD и кнопка "Завершить ход"): секции
+         * необязательны — без них используются типовые элементы */
+        if (has_pieces(cfg, "hud") &&
+            load_pieces(cfg, windows_cfg_path, "hud", g_hud) == 0 &&
+            load_rect(cfg, windows_cfg_path, "hud", "bg_pattern",
+                      &g_hud_bg) == 0) {
+            /* загружено */
+        } else {
+            memcpy(g_hud, g_win, sizeof(g_hud));
+            g_hud_bg = g_win_bg;
+        }
+        if (has_pieces(cfg, "hud_button") &&
+            load_pieces(cfg, windows_cfg_path, "hud_button",
+                        g_hud_btn) == 0) {
+            /* загружено */
+        } else {
+            memcpy(g_hud_btn, g_button, sizeof(g_hud_btn));
+        }
+        if (has_pieces(cfg, "hud_button_pressed") &&
+            load_pieces(cfg, windows_cfg_path, "hud_button_pressed",
+                        g_hud_btn_pressed) == 0) {
+            /* загружено */
+        } else {
+            memcpy(g_hud_btn_pressed, g_button_pressed,
+                   sizeof(g_hud_btn_pressed));
+        }
         if (load_rect(cfg, windows_cfg_path, "progressbar", "start",
                       &g_pb_start) != 0 ||
             load_rect(cfg, windows_cfg_path, "progressbar", "end",
@@ -152,9 +189,10 @@ int ui_init(const char *windows_cfg_path)
             break;
 
         const ui_rect *all[] = {
-            g_button, g_button_pressed, g_win
+            g_button, g_button_pressed, g_win, g_hud, g_hud_btn,
+            g_hud_btn_pressed
         };
-        for (int a = 0; a < 3; a++)
+        for (int a = 0; a < 6; a++)
             for (int i = 0; i < P_COUNT; i++)
                 if (!rect_ok(&all[a][i], g_skin)) {
                     fprintf(stderr, "ui_init: элемент '%s' выходит за границы %s\n",
@@ -296,12 +334,24 @@ static void draw_button_label(const ui_button *btn, const char *text)
     draw_string(text, tx, ty, size);
 }
 
+void ui_button_set_skin(int index, int skin)
+{
+    if (index < 0 || index >= ui_buttons_count)
+        return;
+    ui_buttons[index].skin = (skin == UI_SKIN_HUD) ? UI_SKIN_HUD
+                                                   : UI_SKIN_DEFAULT;
+}
+
 void ui_button_draw(const ui_button *btn)
 {
     if (!btn || !btn->enabled || !g_skin)
         return;
 
-    const ui_rect *pieces = btn->pressed ? g_button_pressed : g_button;
+    const ui_rect *pieces;
+    if (btn->skin == UI_SKIN_HUD)
+        pieces = btn->pressed ? g_hud_btn_pressed : g_hud_btn;
+    else
+        pieces = btn->pressed ? g_button_pressed : g_button;
     draw_9slice(pieces, btn->x, btn->y, btn->w, btn->h);
 
     /* рисуется надпись, а если она пуста — глиф (крестик и т.п.) */
@@ -323,22 +373,23 @@ int ui_button_check_press(const ui_button *btn)
     return plat_mouse_left_down();
 }
 
-void ui_buttons_process(void)
+int ui_buttons_process(void)
 {
     /* фронт нажатия/отпускания читается один раз за кадр для всех кнопок */
     int press = plat_mouse_left_pressed();
     int release = plat_mouse_left_released();
     int down = plat_mouse_left_down();
-    ui_buttons_process_ext(press, release, down);
+    return ui_buttons_process_ext(press, release, down);
 }
 
-void ui_buttons_process_ext(int left_pressed, int left_released,
-                            int left_down)
+int ui_buttons_process_ext(int left_pressed, int left_released,
+                           int left_down)
 {
     int press = left_pressed;
     int release = left_released;
     int down = left_down;
     int mx, my;
+    int hit = 0; /* нажатие пришлось внутрь отрисовываемой кнопки */
     plat_mouse_pos(&mx, &my);
 
     for (int i = 0; i < ui_buttons_count; i++) {
@@ -349,8 +400,10 @@ void ui_buttons_process_ext(int left_pressed, int left_released,
         }
         int inside = mx >= b->x && mx < b->x + b->w &&
                      my >= b->y && my < b->y + b->h;
-        if (press && inside)
+        if (press && inside) {
             b->pressed = 1;
+            hit = 1;
+        }
         else if (b->pressed && down && !inside)
             b->pressed = 0;         /* увели курсор с удерживаемой кнопки */
         if (release) {
@@ -359,6 +412,7 @@ void ui_buttons_process_ext(int left_pressed, int left_released,
             b->pressed = 0;
         }
     }
+    return hit;
 }
 
 void ui_buttons_clear(void)
@@ -399,6 +453,20 @@ void ui_window_draw(int x, int y, int w, int h)
                    w - g_win[P_LEFT].w - g_win[P_RIGHT].w,
                    h - g_win[P_TOP].h - g_win[P_BOTTOM].h);
     draw_border(g_win, x, y, w, h);
+}
+
+/* Окно HUD — та же сборка, что у ui_window_draw, но киберпанк-тайлами
+ * из секции {hud} (без секции — типовыми, см. ui_init). */
+void ui_hud_window_draw(int x, int y, int w, int h)
+{
+    if (!g_skin || w <= 0 || h <= 0)
+        return;
+    draw_center(g_hud, x, y, w, h);
+    draw_tile_both(&g_hud_bg,
+                   x + g_hud[P_LEFT].w, y + g_hud[P_TOP].h,
+                   w - g_hud[P_LEFT].w - g_hud[P_RIGHT].w,
+                   h - g_hud[P_TOP].h - g_hud[P_BOTTOM].h);
+    draw_border(g_hud, x, y, w, h);
 }
 
 /* ------------------------------------------------------------ прогрессбар */
