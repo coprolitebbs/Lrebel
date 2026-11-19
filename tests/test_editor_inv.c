@@ -18,8 +18,9 @@
  *   - дефолтные боевые параметры персонажа при постановке (диапазоны
  *     Rebel Star DOS по фракции);
  *   - P открывает окно параметров персонажа; клик выбирает параметр
- *     (рамка), +/- изменяет его в пределах 0..100, клик по "Командир"
- *     переключает флаг;
+ *     (рамка), +/- изменяет его в пределах 0..100 (клавиши "+"/"-" как
+ *     на цифровой клавиатуре, так и в главном ряду, где "+" — Shift+"=");
+ *     клик по "Командир" переключает флаг;
  *   - боевые параметры и инвентарь персонажа сохраняются в файл карты и
  *     загружаются из него (roundtrip; формат v2 LRM2), старый формат v1
  *     (LRM1, maps/map1.map) читается — параметры генерируются дефолтными.
@@ -366,6 +367,20 @@ int main(void)
         push_key('-', SDL_SCANCODE_KP_MINUS);
         frame();
         assert(g_map.objects[0].stats.speed == sp - 1);
+        g_map.objects[0].stats.speed = sp; /* вернуть для сценария 15 */
+        /* главный ряд клавиатуры: клавиша "+" — это Shift+"=" (один
+         * scancode SDL_SCANCODE_EQUALS). Проверяем, что и "=" без Shift,
+         * и "+" с Shift увеличивают параметр (раньше plat_last_key
+         * возвращал "=" и значение не росло); "-" главного ряда работает */
+        push_key('=', SDL_SCANCODE_EQUALS);
+        frame();
+        assert(g_map.objects[0].stats.speed == sp + 1);
+        push_key('+', SDL_SCANCODE_EQUALS); /* то же с нажатым Shift */
+        frame();
+        assert(g_map.objects[0].stats.speed == sp + 2);
+        push_key('-', SDL_SCANCODE_MINUS);
+        frame();
+        assert(g_map.objects[0].stats.speed == sp + 1);
         g_map.objects[0].stats.speed = sp; /* вернуть для сценария 15 */
         /* "Броня" (ряд 5): -3 раза от значения 0..2 — ограничение снизу */
         click_left(202 + 300, params_row_y(CHAR_PARAM_ARMOR));

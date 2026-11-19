@@ -351,8 +351,13 @@ int plat_poll_events(void)
             if (ev.type == SDL_KEYDOWN && !ev.key.repeat) {
                 /* клавиатура навигации приводится к обычным кодам,
                  * чтобы верхний уровень не зависел от SDL-констант */
-                if (us == SDLK_KP_PLUS)  us = '+';
-                if (us == SDLK_KP_MINUS) us = '-';
+                /* "+/=" — одна физическая клавиша: SDL_GetKeyFromScancode
+                 * не учитывает модификаторы, поэтому нажатие "+" (Shift+«=»)
+                 * приходит как SDLK_EQUALS и должно сводиться к '+' так же,
+                 * как и клавиша "+" на цифровой клавиатуре */
+                if (us == SDLK_KP_PLUS || us == SDLK_PLUS ||
+                    us == SDLK_EQUALS) us = '+';
+                if (us == SDLK_KP_MINUS || us == SDLK_MINUS) us = '-';
                 if (us > 0)
                     g_last_key = us;
             }
