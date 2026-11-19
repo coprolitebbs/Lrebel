@@ -9,6 +9,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #include "readconfig.h"
 #include "utf8_win1251.h"
@@ -28,12 +29,28 @@ static int            g_character_count = 0;
 static char g_faction_names[CHAR_FACTION_COUNT][OBJECT_NAME_MAX];
 static int  g_faction_player[CHAR_FACTION_COUNT];
 
-/* фракции: здоровье и координаты тайлов 128x128 в img/hudimages.png
+/* фракции: координаты тайлов 128x128 в img/hudimages.png
  * (в пикселях атласа, левый верхний угол; -1 — не заданы) */
-#define FACTION_HEALTH_DEFAULT 100
-static int g_faction_health[CHAR_FACTION_COUNT];
 static int g_faction_hud_x[CHAR_FACTION_COUNT][CHAR_TILE_STATE_COUNT];
 static int g_faction_hud_y[CHAR_FACTION_COUNT][CHAR_TILE_STATE_COUNT];
+
+/* Дефолтные диапазоны боевых параметров при постановке персонажа в
+ * редакторе (как в Rebel Star DOS); порядок — char_param без флага
+ * Командир: Скорость, Выносливость, Меткость, Мораль, Здоровье, Броня. */
+typedef struct stat_range { int lo, hi; } stat_range;
+
+static const stat_range g_stat_ranges_regular[] = {
+    { 15, 18 }, { 40, 60 }, { 45, 65 }, { 50, 70 }, { 10, 15 }, { 0, 2 }
+};
+static const stat_range g_stat_ranges_commander[] = {
+    { 18, 20 }, { 50, 70 }, { 65, 80 }, { 80, 95 }, { 15, 20 }, { 2, 4 }
+};
+static const stat_range g_stat_ranges_robot[] = {
+    { 12, 16 }, { 80, 100 }, { 50, 65 }, { 100, 100 }, { 20, 30 }, { 5, 10 }
+};
+
+/* Число боевых параметров (без флага Командир). */
+#define STAT_RANGES_COUNT 6
 
 /* ------------------------------------------------------------ утилиты */
 
@@ -263,11 +280,8 @@ static void load_factions(const config *cfg)
         if (control)
             g_faction_player[n] = (strcmp(control, "player") == 0);
 
-        /* здоровье и тайлы персонажа 128x128 в img/hudimages.png */
-        g_faction_health[n] = config_get_int(cfg, sect, "health",
-                                             FACTION_HEALTH_DEFAULT);
-        if (g_faction_health[n] < 1)
-            g_faction_health[n] = 1;
+        /* тайлы персонажа 128x128 в img/hudimages.png (здоровье —
+         * боевой параметр персонажа на карте, см. map_char_stats) */
         for (int s = 0; s < CHAR_TILE_STATE_COUNT; s++) {
             int x, y;
             default_faction_hud(n, (char_tile_state)s, &x, &y);
@@ -311,9 +325,28 @@ static void load_characters(const config *cfg)
             ? (strcmp(control, "player") == 0)
             : objects_faction_is_player(c->faction);
 
-        c->steps_per_turn = config_get_int(cfg, sect, "steps", 0);
-        if (c->steps_per_turn < 0)
-            c->steps_per_turn = 0;
+        /* боевые параметры: ключи speed/endurance/accuracy/morale/
+         * health/armor/commander; по умолчанию — середина диапазона
+         * обычного бойца фракции (детерминированное значение) */
+        const stat_range *rng = (c->faction == CHAR_FACTION_CYBORGS)
+            ? g_stat_ranges_robot : g_stat_ranges_regular;
+        int *fields[STAT_RANGES_COUNT] = {
+            &c->stats.speed, &c->stats.endurance, &c->stats.accuracy,
+            &c->stats.morale, &c->stats.health, &c->stats.armor
+        };
+        static const char *keys[STAT_RANGES_COUNT] = {
+            "speed", "endurance", "accuracy", "morale", "health", "armor"
+        };
+        for (int p = 0; p < STAT_RANGES_COUNT; p++) {
+            int mid = (rng[p].lo + rng[p].hi) / 2;
+            *fields[p] = config_get_int(cfg, sect, keys[p], mid);
+            if (*fields[p] < 0)
+                *fields[p] = 0;
+            if (*fields[p] > 100)
+                *fields[p] = 100;
+        }
+        c->stats.commander =
+            config_get_int(cfg, sect, "commander", 0) ? 1 : 0;
 
         /* дальность видимости: радиус раскрытия "тумана войны"; по
          * умолчанию 12 элементов карты (CHAR_DEFAULT_VIS_RANGE) */
@@ -329,6 +362,10 @@ int objects_load(const char *cfg_path)
     init_faction_defaults();
     g_object_count = 0;
     g_character_count = 0;
+
+    /* генератор случайных чисел — для дефолтных параметров персонажей
+     * при постановке в редакторе (objects_faction_default_stats) */
+    srand((unsigned)time(NULL));
 
     config *cfg = config_load(cfg_path);
     if (!cfg) {
@@ -387,11 +424,48 @@ int objects_faction_is_player(char_faction faction)
     return g_faction_player[faction];
 }
 
-int objects_faction_health(char_faction faction)
+void objects_faction_default_stats(char_faction faction, int commander,
+                                   map_char_stats *out)
 {
-    if (faction < 0 || faction >= CHAR_FACTION_COUNT)
-        return FACTION_HEALTH_DEFAULT;
-    return g_faction_health[faction];
+    if (!out)
+        return;
+    memset(out, 0, sizeof(*out));
+    /* у роботов свой набор и командиров не бывает */
+    const stat_range *rng = (faction == CHAR_FACTION_CYBORGS)
+        ? g_stat_ranges_robot
+        : (commander ? g_stat_ranges_commander : g_stat_ranges_regular);
+    int *fields[STAT_RANGES_COUNT] = {
+        &out->speed, &out->endurance, &out->accuracy,
+        &out->morale, &out->health, &out->armor
+    };
+    for (int p = 0; p < STAT_RANGES_COUNT; p++) {
+        int lo = rng[p].lo, hi = rng[p].hi;
+        if (hi < lo) {
+            int t = lo;
+            lo = hi;
+            hi = t;
+        }
+        *fields[p] = lo + rand() % (hi - lo + 1);
+    }
+    out->commander = (faction != CHAR_FACTION_CYBORGS && commander) ? 1 : 0;
+}
+
+int objects_char_steps(const map_char_stats *st, float weight_kg)
+{
+    /* Механика Rebel Star (DOS): за игровой ход персонаж проходит число
+     * шагов, пропорциональное его Скорости (в серии Rebelstar у юнита
+     * есть очки действия, из которых тратится по очку на шаг). Выносли-
+     * вость дает множитель 0.5 (0) .. 1.0 (100), вес снаряжения отнимает
+     * по шагу за каждые 10 кг. Результат округляется до целого, минимум
+     * 1 шаг. */
+    if (!st || st->speed <= 0)
+        return 1;
+    float steps = (float)st->speed * (0.5f + (float)st->endurance / 200.0f)
+                  - weight_kg / 10.0f;
+    int s = (int)(steps + 0.5f);
+    if (s < 1)
+        s = 1;
+    return s;
 }
 
 int objects_faction_hud_img(char_faction faction, char_tile_state st,

@@ -13,6 +13,20 @@
  *   u32      число объектов
  *   объекты: { u16 тип, u16 направление, f32 x, f32 y }
  *   блоки:   u32 число серий, далее серии { u32 длина, u8 флаг }
+ *
+ * Формат v2 (магия 'L','R','M','2') добавляет у каждого объекта боевые
+ * параметры персонажа и его инвентарь:
+ *   объекты: { u16 тип, u16 направление, f32 x, f32 y,
+ *              u8 Скорость, u8 Выносливость, u8 Меткость, u8 Мораль,
+ *              u8 Здоровье, u8 Броня, u8 Командир (0/1), u8 макс. здоровье,
+ *              инвентарь: u8 есть (0/1); если есть —
+ *                u16 число предметов,
+ *                предметы { u8 колонка, u8 ряд, u8 повернут,
+ *                           u16 патронов, u16 количество, u16 вид },
+ *                u16 индекс основного оружия (0xFFFF — нет) }
+ * Файлы v1 читаются без изменений: у объектов параметры получают
+ * дефолтные значения (случайные по фракции), инвентари пусты. Сохранение
+ * выполняется в формате v2.
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -20,7 +34,7 @@
 #include <math.h>
 
 #include "readconfig.h"
-#include "objects.h" /* objects_faction_health — здоровье персонажей */
+#include "objects.h" /* objects_faction_default_stats — параметры персонажей */
 #include "map.h"
 
 /* ------------------------------------------------------------ реестр */
@@ -43,18 +57,18 @@ static int bool_from_str(const char *s)
                  strcmp(s, "yes") == 0 || strcmp(s, "on") == 0);
 }
 
-/* Здоровье объекта при появлении на карте: у персонажей — полное
- * (из config/objects.cfg, ключ health секции {char_typeN}), у предметов
- * не используется (0). */
-static void map_object_init_health(map_object *o)
+/* Боевые параметры объекта при появлении на карте: у персонажей —
+ * дефолтные значения по фракции (случайные в диапазонах Rebel Star DOS;
+ * командиром персонаж становится только если он помечен в редакторе),
+ * у предметов не используются (нули). */
+static void map_object_init_stats(map_object *o)
 {
+    memset(&o->stats, 0, sizeof(o->stats));
+    o->max_health = 0;
     if (o->type >= OBJ_TYPE_CHAR_FIRST &&
         o->type < OBJ_TYPE_CHAR_FIRST + OBJ_TYPE_CHAR_COUNT) {
-        o->max_health = objects_faction_health((char_faction)o->type);
-        o->health = o->max_health;
-    } else {
-        o->max_health = 0;
-        o->health = 0;
+        objects_faction_default_stats((char_faction)o->type, 0, &o->stats);
+        o->max_health = o->stats.health;
     }
 }
 
@@ -195,8 +209,35 @@ void map_free(game_map *m)
     }
     free(m->blocks);
     m->blocks = NULL;
+    map_inventories_clear(m);
     m->object_count = 0;
     m->modified = 0;
+}
+
+/* ------------------------------------------------- инвентари объектов */
+
+/* Освобождает все инвентари объектов карты. */
+void map_inventories_clear(game_map *m)
+{
+    if (!m)
+        return;
+    for (int i = 0; i < MAP_OBJECTS_MAX; i++) {
+        free(m->inventories[i]);
+        m->inventories[i] = NULL;
+    }
+}
+
+/* Инвентарь объекта (создается лениво при первом обращении). */
+inventory *map_object_inventory(game_map *m, int idx)
+{
+    if (!m || idx < 0 || idx >= m->object_count)
+        return NULL;
+    if (!m->inventories[idx]) {
+        m->inventories[idx] = (inventory *)malloc(sizeof(inventory));
+        if (m->inventories[idx])
+            inventory_init(m->inventories[idx]);
+    }
+    return m->inventories[idx];
 }
 
 /* ------------------------------------------------------- файл: примитивы */
@@ -360,6 +401,184 @@ static int rle8_read(plat_file *f, unsigned char *data, int n)
     return 0;
 }
 
+/* ------------------------------------- файл: параметры и инвентари объектов */
+
+/* Обрезает значение параметра до пределов 0..100. */
+static void clamp_stat(int *v)
+{
+    if (*v < 0)
+        *v = 0;
+    if (*v > 100)
+        *v = 100;
+}
+
+/* Боевые параметры объекта (v2): 8 байт — Скорость, Выносливость,
+ * Меткость, Мораль, Здоровье, Броня, Командир, макс. здоровье. */
+static int save_object_stats(plat_file *f, const map_object *o)
+{
+    if (w8(f, (unsigned)o->stats.speed) != 0 ||
+        w8(f, (unsigned)o->stats.endurance) != 0 ||
+        w8(f, (unsigned)o->stats.accuracy) != 0 ||
+        w8(f, (unsigned)o->stats.morale) != 0 ||
+        w8(f, (unsigned)o->stats.health) != 0 ||
+        w8(f, (unsigned)o->stats.armor) != 0 ||
+        w8(f, (unsigned)o->stats.commander) != 0 ||
+        w8(f, (unsigned)o->max_health) != 0)
+        return -1;
+    return 0;
+}
+
+static int load_object_stats(plat_file *f, map_object *o)
+{
+    unsigned v[8] = { 0, 0, 0, 0, 0, 0, 0, 0 };
+    for (int k = 0; k < 8; k++)
+        if (r8(f, &v[k]) != 0)
+            return -1;
+    o->stats.speed     = (int)v[0];
+    o->stats.endurance = (int)v[1];
+    o->stats.accuracy  = (int)v[2];
+    o->stats.morale    = (int)v[3];
+    o->stats.health    = (int)v[4];
+    o->stats.armor     = (int)v[5];
+    o->stats.commander = v[6] ? 1 : 0;
+    o->max_health      = (int)v[7];
+    clamp_stat(&o->stats.speed);
+    clamp_stat(&o->stats.endurance);
+    clamp_stat(&o->stats.accuracy);
+    clamp_stat(&o->stats.morale);
+    clamp_stat(&o->stats.health);
+    clamp_stat(&o->stats.armor);
+    clamp_stat(&o->max_health);
+    return 0;
+}
+
+/* Список предметов инвентаря в порядке якорных ячеек сетки (сверху вниз,
+ * слева направо) — в этом порядке предметы сохраняются в файл карты. */
+static int inventory_item_list(const inventory *inv,
+                               inventory_item *list[], int max)
+{
+    int n = 0;
+    for (int r = 0; r < INVENTORY_SIZE; r++)
+        for (int c = 0; c < INVENTORY_SIZE; c++) {
+            inventory_item *it = inv->items_places[r][c];
+            if (!it)
+                continue;
+            int seen = 0;
+            for (int k = 0; k < n; k++)
+                if (list[k] == it) {
+                    seen = 1;
+                    break;
+                }
+            if (!seen && n < max)
+                list[n++] = it;
+        }
+    return n;
+}
+
+/* Ячейка-якорь предмета (его лево-верхняя ячейка). */
+static void inventory_item_anchor(const inventory *inv,
+                                  const inventory_item *it,
+                                  int *col, int *row)
+{
+    *col = 0;
+    *row = 0;
+    for (int r = 0; r < INVENTORY_SIZE; r++)
+        for (int c = 0; c < INVENTORY_SIZE; c++)
+            if (inv->items_places[r][c] == it) {
+                *col = c;
+                *row = r;
+                return;
+            }
+}
+
+/* Инвентарь объекта в файле (v2): флаг наличия, число предметов, записи
+ * предметов (колонка, ряд, поворот, патроны, количество, вид) и индекс
+ * основного оружия (0xFFFF — не выбрано). */
+static int save_inventory_data(plat_file *f, const inventory *inv)
+{
+    inventory_item *list[INVENTORY_SIZE * INVENTORY_SIZE];
+    int n = 0;
+    if (inv)
+        n = inventory_item_list(inv, list, (int)(sizeof(list) / sizeof(list[0])));
+    if (w8(f, n > 0 ? 1u : 0u) != 0)
+        return -1;
+    if (n == 0)
+        return 0;
+    if (w16(f, (unsigned)n) != 0)
+        return -1;
+    const game_object_desc *base = objects_desc(0);
+    for (int k = 0; k < n; k++) {
+        const inventory_item *it = list[k];
+        int col, row;
+        inventory_item_anchor(inv, it, &col, &row);
+        unsigned kind = 0xFFFF; /* вид отсутствует — такого не бывает у
+                                   предметов на сетке, но подстрахуемся */
+        if (it->proto && base && it->proto >= base)
+            kind = (unsigned)(it->proto - base);
+        if (w8(f, (unsigned)col) != 0 || w8(f, (unsigned)row) != 0 ||
+            w8(f, (unsigned)(it->rotated ? 1 : 0)) != 0 ||
+            w16(f, (unsigned)it->ammo_loaded) != 0 ||
+            w16(f, (unsigned)it->count) != 0 ||
+            w16(f, kind) != 0)
+            return -1;
+    }
+    unsigned sel = 0xFFFF;
+    for (int k = 0; k < n; k++)
+        if (list[k] == inv->selected_weapon)
+            sel = (unsigned)k;
+    return w16(f, sel);
+}
+
+static int load_inventory_data(plat_file *f, inventory *inv)
+{
+    unsigned has = 0;
+    if (r8(f, &has) != 0)
+        return -1;
+    if (!has)
+        return 0;
+    unsigned n = 0;
+    if (r16(f, &n) != 0 || n > INVENTORY_ITEMS_MAX)
+        return -1;
+    inventory_item *slots[INVENTORY_ITEMS_MAX];
+    memset(slots, 0, sizeof(slots));
+    for (unsigned k = 0; k < n; k++) {
+        unsigned col = 0, row = 0, rot = 0, ammo = 0, cnt = 0, kind = 0;
+        if (r8(f, &col) != 0 || r8(f, &row) != 0 || r8(f, &rot) != 0 ||
+            r16(f, &ammo) != 0 || r16(f, &cnt) != 0 || r16(f, &kind) != 0)
+            return -1;
+        const game_object_desc *d = (kind != 0xFFFF)
+            ? objects_desc((int)kind) : NULL;
+        /* вид отсутствует в конфиге или предмет не влезает — пропуск */
+        if (!d || col >= INVENTORY_SIZE || row >= INVENTORY_SIZE || rot > 1)
+            continue;
+        int sx = d->inventory_size_x, sy = d->inventory_size_y;
+        if (rot) {
+            int t = sx;
+            sx = sy;
+            sy = t;
+        }
+        if (!inventory_fits(inv, (int)col, (int)row, sx, sy, NULL))
+            continue;
+        inventory_item *it = NULL;
+        /* добавление кладет предмет на первое свободное место и заполняет
+         * магазин; переносим его в сохраненную ячейку и восстанавливаем
+         * сохраненные количество и патроны */
+        if (inventory_add_item(inv, d, &it) != 0 || !it)
+            continue;
+        if (inventory_move(inv, it, (int)col, (int)row, (int)rot) != 0)
+            continue;
+        it->count = (int)cnt;
+        it->ammo_loaded = (int)ammo;
+        slots[k] = it;
+    }
+    unsigned sel = 0;
+    if (r16(f, &sel) != 0)
+        return -1;
+    if (sel != 0xFFFF && sel < n && slots[sel])
+        inv->selected_weapon = slots[sel];
+    return 0;
+}
+
 /* ------------------------------------------------------- файл: карта */
 
 int map_load(game_map *m, const char *path)
@@ -379,9 +598,10 @@ int map_load(game_map *m, const char *path)
     int ok = (r8(f, &magic[0]) == 0 && r8(f, &magic[1]) == 0 &&
               r8(f, &magic[2]) == 0 && r8(f, &magic[3]) == 0 &&
               magic[0] == 'L' && magic[1] == 'R' && magic[2] == 'M' &&
-              magic[3] == '1' &&
+              (magic[3] == '1' || magic[3] == '2') &&
               r32(f, &w) == 0 && r32(f, &h) == 0 &&
               w >= 1 && h >= 1 && w <= MAP_MAX_SIZE && h <= MAP_MAX_SIZE);
+    int version = (magic[3] == '2') ? 2 : 1;
     if (ok)
         ok = map_init(m, (int)w, (int)h) == 0;
 
@@ -402,7 +622,15 @@ int map_load(game_map *m, const char *path)
             o->dir = (int)dir;
             o->x = x;
             o->y = y;
-            map_object_init_health(o);
+            map_object_init_stats(o);
+        }
+        if (ok && version >= 2) {
+            /* v2: боевые параметры и инвентарь персонажа */
+            map_object *o = &m->objects[m->object_count - 1];
+            ok = load_object_stats(f, o) == 0;
+            inventory *inv = ok ? map_object_inventory(m, m->object_count - 1)
+                                : NULL;
+            ok = ok && inv && load_inventory_data(f, inv) == 0;
         }
     }
 
@@ -438,7 +666,7 @@ int map_save(const game_map *m, const char *path)
     }
 
     int ok = w8(f, 'L') == 0 && w8(f, 'R') == 0 &&
-             w8(f, 'M') == 0 && w8(f, '1') == 0 &&
+             w8(f, 'M') == 0 && w8(f, '2') == 0 && /* v2: параметры и инвентари */
              w32(f, (unsigned long)m->w) == 0 &&
              w32(f, (unsigned long)m->h) == 0;
     for (int l = 0; ok && l < MAP_LAYERS; l++)
@@ -449,7 +677,9 @@ int map_save(const game_map *m, const char *path)
         const map_object *o = &m->objects[i];
         ok = w16(f, (unsigned)o->type) == 0 &&
              w16(f, (unsigned)o->dir) == 0 &&
-             wf32(f, o->x) == 0 && wf32(f, o->y) == 0;
+             wf32(f, o->x) == 0 && wf32(f, o->y) == 0 &&
+             save_object_stats(f, o) == 0 &&
+             save_inventory_data(f, m->inventories[i]) == 0;
     }
     if (ok)
         ok = rle8_write(f, m->blocks, m->w * m->h) == 0;
@@ -495,7 +725,7 @@ int map_object_add(game_map *m, int type, float x, float y, int dir)
     o->x = x;
     o->y = y;
     o->dir = dir;
-    map_object_init_health(o);
+    map_object_init_stats(o);
     return m->object_count - 1;
 }
 
@@ -503,8 +733,14 @@ int map_object_remove_index(game_map *m, int index)
 {
     if (!m || index < 0 || index >= m->object_count)
         return 0;
+    free(m->inventories[index]);       /* инвентарь удаляемого объекта  */
+    m->inventories[index] = NULL;
     memmove(&m->objects[index], &m->objects[index + 1],
             (size_t)(m->object_count - index - 1) * sizeof(map_object));
+    /* инвентари сдвигаются вслед за объектами (индексы сместились)      */
+    memmove(&m->inventories[index], &m->inventories[index + 1],
+            (size_t)(m->object_count - index - 1) * sizeof(inventory *));
+    m->inventories[m->object_count - 1] = NULL;
     m->object_count--;
     return 1;
 }

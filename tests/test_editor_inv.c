@@ -9,12 +9,20 @@
  *     ПКМ выбирает объект / сбрасывает выбор на пустой ячейке;
  *   - DEL удаляет выбранный объект и сбрасывает выбор; инвентари
  *     объектов корректно сдвигаются вместе с объектами;
- *   - P открывает/закрывает окно инвентаря в левой половине окна
+ *   - I открывает/закрывает окно инвентаря в левой половине окна
  *     (пиксельные проверки сетки и слота оружия);
  *   - O открывает окно выбора предмета; клик добавляет предмет в
  *     инвентарь выбранного объекта (с габаритами из config/objects.cfg);
  *   - перетаскивание предметов мышью: перенос в свободную ячейку,
- *     выброс за пределы инвентаря, назначение основного оружия.
+ *     выброс за пределы инвентаря, назначение основного оружия;
+ *   - дефолтные боевые параметры персонажа при постановке (диапазоны
+ *     Rebel Star DOS по фракции);
+ *   - P открывает окно параметров персонажа; клик выбирает параметр
+ *     (рамка), +/- изменяет его в пределах 0..100, клик по "Командир"
+ *     переключает флаг;
+ *   - боевые параметры и инвентарь персонажа сохраняются в файл карты и
+ *     загружаются из него (roundtrip; формат v2 LRM2), старый формат v1
+ *     (LRM1, maps/map1.map) читается — параметры генерируются дефолтными.
  *
  * Сборка (из корня репозитория):
  *   cc -std=c99 -O2 -Wall -I<SDL2 inc> -I<x86 inc> -Isrc \
@@ -39,10 +47,18 @@
 #include "inventory_ui.h"
 #include "editor.h"
 
+/* координаты строк параметров в окне P (окно 620px по центру 1024x768,
+ * заголовок 130, строки по 46px): см. params_rect/PARAMS_* в editor.c */
+static int params_row_y(int idx)
+{
+    return (768 - (130 + CHAR_PARAM_COUNT * 46 + 64)) / 2 + 130
+           + idx * 46 + 23;
+}
+
 /* --- трюк: открыть static-определения двух модулей в этот TU --- */
 #define static
 #include "portable_posix.c" /* доступ к g_renderer (чтение пикселей)      */
-#include "editor.c"         /* доступ к g_map/g_selected/g_obj_inv/g_modal */
+#include "editor.c"         /* доступ к g_map/g_selected/g_modal/g_param_sel */
 #undef static
 
 #define TEST_MAP_PATH "/tmp/lrebel_invtest.map"
@@ -198,13 +214,13 @@ int main(void)
     click_right(cell_x(33), cell_y(32));  /* снова выбираем второй */
     assert(g_selected == 1);
 
-    printf("== 3. P открывает окно инвентаря (левая половина) ==\n");
+    printf("== 3. I открывает окно инвентаря (левая половина) ==\n");
     unsigned char r0, g0, b0;
     read_px(500, 700, &r0, &g0, &b0); /* фон карты до открытия окна */
-    push_key('p', SDL_SCANCODE_P);
+    push_key('i', SDL_SCANCODE_I);
     frame();
     assert(inventory_ui_is_open());
-    assert(g_obj_inv[1] != NULL); /* инвентарь выбранного объекта создан */
+    assert(g_map.inventories[1] != NULL); /* инвентарь выбранного объекта */
     /* фон в левой половине сменился на скин окна */
     assert(px_diff(500, 700, r0, g0, b0));
     /* рамка ячейки (14,14) сетки инвентаря — цвет (80,80,100) */
@@ -218,7 +234,7 @@ int main(void)
     assert(g_modal == ED_MODAL_INVPICK);
     click_left(200, 382); /* первый тайл окна выбора — {object1}, 2x1 */
     {
-        inventory *inv = g_obj_inv[1];
+        inventory *inv = g_map.inventories[1];
         assert(inventory_used_count(inv) == 1);
         inventory_item *it = inventory_item_at(inv, 0, 0);
         assert(it && it->proto);
@@ -232,7 +248,7 @@ int main(void)
     printf("== 5. O: боеприпас добавляется рядом, стек 30 ==\n");
     click_left(640, 382); /* тайл окна выбора — {object12} */
     {
-        inventory *inv = g_obj_inv[1];
+        inventory *inv = g_map.inventories[1];
         assert(inventory_used_count(inv) == 2);
         /* пистолет 2x1 занял (0,0)-(1,0), боеприпас ложится в (2,0) */
         inventory_item *it = inventory_item_at(inv, 2, 0);
@@ -248,7 +264,7 @@ int main(void)
 
     printf("== 6. перетаскивание: боеприпас (1,0) -> (10,10) ==\n");
     {
-        inventory *inv = g_obj_inv[1];
+        inventory *inv = g_map.inventories[1];
         inventory_item *ammo = inventory_item_at(inv, 2, 0);
         drag_left(96, 56, 352, 376); /* центр ячейки (2,0) -> (10,10) */
         assert(inventory_item_at(inv, 10, 10) == ammo);
@@ -257,7 +273,7 @@ int main(void)
 
     printf("== 7. выброс предмета за пределы инвентаря ==\n");
     {
-        inventory *inv = g_obj_inv[1];
+        inventory *inv = g_map.inventories[1];
         assert(inventory_used_count(inv) == 2);
         drag_left(352, 376, 900, 500); /* правая половина окна — мимо */
         assert(inventory_used_count(inv) == 1);
@@ -266,7 +282,7 @@ int main(void)
 
     printf("== 8. пистолет в слот основного оружия ==\n");
     {
-        inventory *inv = g_obj_inv[1];
+        inventory *inv = g_map.inventories[1];
         inventory_item *w = inventory_item_at(inv, 0, 0);
         assert(w);
         drag_left(32, 56, 256, 576); /* ячейка (0,0) -> область оружия */
@@ -275,8 +291,8 @@ int main(void)
         assert(w->ammo_loaded == 8);
     }
 
-    printf("== 9. повторное P закрывает окно ==\n");
-    push_key('p', SDL_SCANCODE_P);
+    printf("== 9. повторное I закрывает окно ==\n");
+    push_key('i', SDL_SCANCODE_I);
     frame();
     assert(!inventory_ui_is_open());
 
@@ -289,23 +305,23 @@ int main(void)
     assert(g_selected == -1);
     /* инвентарь удаленного объекта освобожден и удален со сдвигом:
      * на месте 0 — инвентарь выжившего объекта (бывшего N1) */
-    assert(g_obj_inv[1] == NULL);
-    assert(g_obj_inv[0] != NULL);
+    assert(g_map.inventories[1] == NULL);
+    assert(g_map.inventories[0] != NULL);
     /* оставшийся объект (бывший N1) сместился на индекс 0 */
     assert((int)g_map.objects[0].x == 33);
 
     printf("== 11. инвентарь сдвинутого объекта доступен по новому индексу ==\n");
     click_right(cell_x(33), cell_y(32));
     assert(g_selected == 0);
-    push_key('p', SDL_SCANCODE_P);
+    push_key('i', SDL_SCANCODE_I);
     frame();
     assert(inventory_ui_is_open());
-    assert(g_obj_inv[0] != NULL);
+    assert(g_map.inventories[0] != NULL);
     /* у выжившего объекта его инвентарь с пистолетом (выбросил только
      * боеприпас) — указатель на оружие сохранился */
-    assert(inventory_used_count(g_obj_inv[0]) == 1);
-    assert(g_obj_inv[0]->selected_weapon != NULL);
-    push_key('p', SDL_SCANCODE_P);
+    assert(inventory_used_count(g_map.inventories[0]) == 1);
+    assert(g_map.inventories[0]->selected_weapon != NULL);
+    push_key('i', SDL_SCANCODE_I);
     frame();
     assert(!inventory_ui_is_open());
 
@@ -313,7 +329,132 @@ int main(void)
     push_key(SDLK_DELETE, SDL_SCANCODE_DELETE);
     frame();
     assert(g_map.object_count == 0);
-    assert(g_obj_inv[0] == NULL);
+    assert(g_map.inventories[0] == NULL);
+
+    printf("== 13. дефолтные параметры персонажа при постановке ==\n");
+    click_left(cell_x(20), cell_y(20));
+    assert(g_map.object_count == 1 && g_selected == 0);
+    {
+        const map_object *o = &g_map.objects[0];
+        assert(o->type == OBJ_TYPE_CHAR_FIRST); /* тип 0 — "Спецназ-9" */
+        /* диапазоны Rebel Star DOS для обычного бойца фракции */
+        assert(o->stats.speed >= 15 && o->stats.speed <= 18);
+        assert(o->stats.endurance >= 40 && o->stats.endurance <= 60);
+        assert(o->stats.accuracy >= 45 && o->stats.accuracy <= 65);
+        assert(o->stats.morale >= 50 && o->stats.morale <= 70);
+        assert(o->stats.health >= 10 && o->stats.health <= 15);
+        assert(o->stats.armor >= 0 && o->stats.armor <= 2);
+        assert(o->stats.commander == 0);
+        assert(o->max_health == o->stats.health);
+    }
+
+    printf("== 14. P: окно параметров, клик, +/-, командир ==\n");
+    push_key('p', SDL_SCANCODE_P);
+    frame();
+    assert(g_modal == ED_MODAL_PARAMS);
+    /* клик по строке "Скорость" (ряд 0) — параметр подсвечивается рамкой */
+    click_left(202 + 300, params_row_y(CHAR_PARAM_SPEED));
+    assert(g_param_sel == CHAR_PARAM_SPEED);
+    {
+        int sp = g_map.objects[0].stats.speed;
+        push_key('+', SDL_SCANCODE_KP_PLUS); /* +1 в пределах 0..100 */
+        frame();
+        assert(g_map.objects[0].stats.speed == sp + 1);
+        push_key('-', SDL_SCANCODE_KP_MINUS);
+        frame();
+        assert(g_map.objects[0].stats.speed == sp);
+        push_key('-', SDL_SCANCODE_KP_MINUS);
+        frame();
+        assert(g_map.objects[0].stats.speed == sp - 1);
+        g_map.objects[0].stats.speed = sp; /* вернуть для сценария 15 */
+        /* "Броня" (ряд 5): -3 раза от значения 0..2 — ограничение снизу */
+        click_left(202 + 300, params_row_y(CHAR_PARAM_ARMOR));
+        assert(g_param_sel == CHAR_PARAM_ARMOR);
+        for (int k = 0; k < 3; k++) {
+            push_key('-', SDL_SCANCODE_KP_MINUS);
+            frame();
+        }
+        assert(g_map.objects[0].stats.armor == 0);
+    }
+    /* клик по строке "Командир" (ряд 6) переключает флаг */
+    click_left(202 + 300, params_row_y(CHAR_PARAM_COMMANDER));
+    assert(g_map.objects[0].stats.commander == 1);
+    click_left(202 + 300, params_row_y(CHAR_PARAM_COMMANDER));
+    assert(g_map.objects[0].stats.commander == 0);
+    /* клик по обычному параметру выбирает строку, флаг не трогает */
+    click_left(202 + 300, params_row_y(CHAR_PARAM_MORALE));
+    assert(g_param_sel == CHAR_PARAM_MORALE);
+    assert(g_map.objects[0].stats.commander == 0);
+    /* повторное P закрывает окно */
+    push_key('p', SDL_SCANCODE_P);
+    frame();
+    assert(g_modal == ED_MODAL_NONE);
+
+    printf("== 15. параметры и инвентарь сохраняются с картой ==\n");
+    /* добавим персонажу предмет через окно инвентаря (I и O) */
+    push_key('i', SDL_SCANCODE_I);
+    frame();
+    assert(inventory_ui_is_open());
+    push_key('o', SDL_SCANCODE_O);
+    frame();
+    click_left(200, 382); /* пистолет {object1}, 2x1 */
+    push_key(SDLK_ESCAPE, SDL_SCANCODE_ESCAPE); /* закрыть окно выбора */
+    frame();
+    assert(g_modal == ED_MODAL_NONE);
+    push_key('i', SDL_SCANCODE_I); /* закрыть инвентарь */
+    frame();
+    assert(!inventory_ui_is_open());
+    assert(inventory_used_count(g_map.inventories[0]) == 1);
+    {
+        /* правим параметры явно — для точного сравнения после загрузки */
+        map_object *o = &g_map.objects[0];
+        o->stats.speed = 17;
+        o->stats.endurance = 55;
+        o->stats.accuracy = 61;
+        o->stats.morale = 66;
+        o->stats.health = 14;
+        o->stats.armor = 2;
+        o->stats.commander = 1;
+        o->max_health = 14;
+        g_map.modified = 1;
+    }
+    assert(map_save(&g_map, "/tmp/lrebel_charinv.map") == 0);
+    {
+        game_map m2;
+        memset(&m2, 0, sizeof(m2));
+        assert(map_load(&m2, "/tmp/lrebel_charinv.map") == 0);
+        assert(m2.object_count == g_map.object_count);
+        const map_object *a = &g_map.objects[0];
+        const map_object *b = &m2.objects[0];
+        assert(memcmp(&a->stats, &b->stats, sizeof(map_char_stats)) == 0);
+        assert(a->max_health == b->max_health);
+        /* инвентарь персонажа восстановлен: пистолет с полным магазином */
+        assert(m2.inventories[0] != NULL);
+        assert(inventory_used_count(m2.inventories[0]) == 1);
+        inventory_item *it = inventory_item_at(m2.inventories[0], 0, 0);
+        assert(it && it->proto && it->proto == objects_desc(0));
+        assert(it->ammo_loaded == 8);
+        assert(m2.inventories[0]->selected_weapon == NULL);
+        map_free(&m2);
+        remove("/tmp/lrebel_charinv.map");
+    }
+
+    printf("== 16. старый формат карты (LRM1) читается ==\n");
+    {
+        game_map m3;
+        memset(&m3, 0, sizeof(m3));
+        /* maps/map1.map — карта репозитория в старом формате v1: у
+         * персонажей параметры генерируются дефолтными, инвентари пусты */
+        assert(map_load(&m3, "maps/map1.map") == 0);
+        for (int i = 0; i < m3.object_count; i++)
+            if (m3.objects[i].type == OBJ_TYPE_CHAR_FIRST) {
+                assert(m3.objects[i].stats.speed > 0);
+                assert(m3.objects[i].stats.health ==
+                       m3.objects[i].max_health);
+                assert(m3.inventories[i] == NULL);
+            }
+        map_free(&m3);
+    }
 
     editor_shutdown();
     ui_shutdown();

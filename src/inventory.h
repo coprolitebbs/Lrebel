@@ -107,4 +107,9 @@ void inventory_unlink(inventory *inv, inventory_item *it);
  * ссылка основного оружия сбрасывается, если указывала на предмет). */
 void inventory_remove(inventory *inv, inventory_item *it);
 
+/* Вес содержимого инвентаря, кг: сумма весов предметов из прототипов
+ * (weight_kg), умноженных на количество в стопке; используется для
+ * расчета числа шагов за игровой ход (objects_char_steps). */
+float inventory_weight_kg(const inventory *inv);
+
 #endif /* INVENTORY_H */

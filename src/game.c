@@ -17,6 +17,8 @@
 #include "ui.h"
 #include "objects.h"
 #include "map.h"
+#include "inventory.h"
+#include "inventory_ui.h"
 #include "game.h"
 
 #define GAME_CFG        "config/editor.cfg" /* общий реестр с редактором  */
@@ -45,7 +47,7 @@ static int g_units[GAME_SIDE_COUNT];   /* юниты сторон при ста�
 static int g_turn = GAME_SIDE_PLAYER;  /* первый ход — за игроком       */
 
 static int g_selected  = -1;           /* выбранный объект (индекс)     */
-static int g_info_open = 0;            /* открыто окно описания         */
+static int g_info_open = 0;            /* открыто окно описания (P)     */
 static int g_quit      = 0;            /* выход из игрового режима      */
 
 static unsigned g_last_ticks = 0;
@@ -65,6 +67,14 @@ static char g_fmt_mag[64];          /* "Магазин: %d"                     
 static char g_fmt_count[64];        /* "В наборе: %d из %d"                */
 static char g_fmt_weight[64];       /* "Вес: %.1f кг"                      */
 static char g_fmt_health[64];       /* "Здоровье: %d/%d"                   */
+static char g_fmt_speed[64];        /* "Скорость: %d"                      */
+static char g_fmt_endurance[80];    /* "Выносливость: %d"                  */
+static char g_fmt_accuracy[64];     /* "Меткость: %d"                      */
+static char g_fmt_morale[64];       /* "Мораль: %d"                        */
+static char g_fmt_armor[64];        /* "Броня: %d"                         */
+static char g_fmt_steps[64];        /* "Шагов за ход: %d"                  */
+static char g_fmt_commander[64];    /* "Командир: %s"                      */
+static char g_txt_yes[16], g_txt_no[16]; /* "да"/"нет"                     */
 static char g_txt_class[OBJ_CLASS_COUNT][32]; /* "Тип: оружие" и т.п.     */
 static char g_txt_btn_close[16];    /* глиф-крестик окна описания          */
 
@@ -76,7 +86,8 @@ static void init_strings(void)
     utf8_to_win1251("Юниты: игрок %d | компьютер %d",
                     g_fmt_units, sizeof(g_fmt_units));
     utf8_to_win1251("Выбран: %s", g_fmt_selected, sizeof(g_fmt_selected));
-    utf8_to_win1251("WASD камера | ЛКМ выбор объекта | I описание | ESC меню",
+    utf8_to_win1251("WASD камера | ЛКМ выбор | I инвентарь | P описание "
+                    "| ESC меню",
                     g_txt_hint, sizeof(g_txt_hint));
     utf8_to_win1251("Управление: %s", g_fmt_ctrl, sizeof(g_fmt_ctrl));
     utf8_to_win1251("Дальность видимости: %d", g_fmt_vis, sizeof(g_fmt_vis));
@@ -87,6 +98,16 @@ static void init_strings(void)
     utf8_to_win1251("В наборе: %d из %d", g_fmt_count, sizeof(g_fmt_count));
     utf8_to_win1251("Вес: %.1f кг", g_fmt_weight, sizeof(g_fmt_weight));
     utf8_to_win1251("Здоровье: %d/%d", g_fmt_health, sizeof(g_fmt_health));
+    utf8_to_win1251("Скорость: %d", g_fmt_speed, sizeof(g_fmt_speed));
+    utf8_to_win1251("Выносливость: %d", g_fmt_endurance,
+                    sizeof(g_fmt_endurance));
+    utf8_to_win1251("Меткость: %d", g_fmt_accuracy, sizeof(g_fmt_accuracy));
+    utf8_to_win1251("Мораль: %d", g_fmt_morale, sizeof(g_fmt_morale));
+    utf8_to_win1251("Броня: %d", g_fmt_armor, sizeof(g_fmt_armor));
+    utf8_to_win1251("Шагов за ход: %d", g_fmt_steps, sizeof(g_fmt_steps));
+    utf8_to_win1251("Командир: %s", g_fmt_commander, sizeof(g_fmt_commander));
+    utf8_to_win1251("да", g_txt_yes, sizeof(g_txt_yes));
+    utf8_to_win1251("нет", g_txt_no, sizeof(g_txt_no));
     utf8_to_win1251("Тип: оружие", g_txt_class[OBJ_CLASS_WEAPON],
                     sizeof(g_txt_class[0]));
     utf8_to_win1251("Тип: боеприпас", g_txt_class[OBJ_CLASS_AMMO],
@@ -248,7 +269,28 @@ static void game_handle_keys(void)
     if (key == 0)
         return;
     if (key == 'i' || key == 'I') {
-        /* окно описания: открывается по "I", если выбран объект,
+        /* окно инвентаря юнита игрока в левой половине окна: открывается
+         * по "I", закрывается повторным нажатием; инвентарь загружается
+         * из файла карты (настраивается в редакторе) */
+        if (g_selected >= 0 && g_selected < g_map.object_count) {
+            const map_object *o = &g_map.objects[g_selected];
+            if (is_unit_type(o->type) &&
+                unit_side(o->type) == GAME_SIDE_PLAYER) {
+                inventory *inv = map_object_inventory(&g_map, g_selected);
+                if (inv) {
+                    if (inventory_ui_is_open())
+                        inventory_ui_close();
+                    else
+                        inventory_ui_open(inv, g_hudimg, 0, 0,
+                                          plat_screen_width() / 2,
+                                          plat_screen_height());
+                }
+            }
+        }
+        return;
+    }
+    if (key == 'p' || key == 'P') {
+        /* окно описания: открывается по "P", если выбран объект,
          * закрывается повторным нажатием */
         if (g_selected >= 0) {
             if (g_info_open)
@@ -259,10 +301,12 @@ static void game_handle_keys(void)
         return;
     }
     if (key == GAME_KEY_ESC) {
-        if (g_info_open)
-            info_close();     /* первый ESC закрывает окно описания */
+        if (inventory_ui_is_open())
+            inventory_ui_close(); /* первый ESC закрывает инвентарь      */
+        else if (g_info_open)
+            info_close();         /* второй — окно описания             */
         else
-            g_quit = 1;       /* второй — выход в главное меню */
+            g_quit = 1;           /* третий — выход в главное меню      */
     }
 }
 
@@ -273,9 +317,18 @@ static void game_handle_mouse(void)
     int down    = plat_mouse_left_down();
 
     int window_open = g_info_open;   /* окно открыто на начало кадра */
+    int sel_old     = g_selected;
 
     /* кнопки окна описания (крестик) обрабатываются первыми */
     ui_buttons_process_ext(press, release, down);
+
+    /* открытое окно инвентаря (левая половина) забирает мышь целиком:
+     * внутри него — выбор и перетаскивание предметов инвентаря */
+    if (inventory_ui_is_open()) {
+        inventory_ui_process_mouse(press, release, down);
+        return;
+    }
+
     if (!press)
         return;
 
@@ -290,6 +343,8 @@ static void game_handle_mouse(void)
     game_select_at(mx, my);
     if (g_selected < 0)
         info_close();        /* выбор снят — окно описания закрывается */
+    else if (g_selected != sel_old)
+        inventory_ui_close(); /* выбор сменился — инвентарь закрывается */
 }
 
 /* ------------------------------------------------------------- отрисовка */
@@ -336,9 +391,9 @@ static void draw_top_bar(void)
  * полное здоровье, частичное или нулевое (мертв). */
 static char_tile_state char_tile_state_of(const map_object *o)
 {
-    if (o->health <= 0)
+    if (o->stats.health <= 0)
         return CHAR_TILE_DEAD;
-    if (o->health < o->max_health)
+    if (o->stats.health < o->max_health)
         return CHAR_TILE_DAMAGED;
     return CHAR_TILE_FULL;
 }
@@ -355,12 +410,15 @@ static void draw_info_window(void)
     const map_object *o = &g_map.objects[g_selected];
 
     char title[OBJECT_NAME_MAX];
-    char line[8][128];
+    char line[12][128];
     int n = 0;
 
     if (is_unit_type(o->type)) {
         /* юнит: на карте пока только тип персонажа (фракция); конкретные
-         * описания {characterN} будут привязываться на следующих этапах */
+         * описания {characterN} будут привязываться на следующих этапах.
+         * Боевые параметры берутся из map_object.stats (задаются в
+         * редакторе и хранятся в файле карты); в игре они не
+         * редактируются */
         char_faction faction = (char_faction)o->type;
         const char *fname = objects_faction_name(faction);
         snprintf(title, sizeof(title), "%s", fname ? fname : "?");
@@ -368,9 +426,32 @@ static void draw_info_window(void)
                  map_char_types[o->type].player
                      ? g_txt_turn_player : g_txt_turn_cpu);
         snprintf(line[n++], sizeof(line[0]), g_fmt_vis, unit_vis_range());
-        if (n < 8)
-            snprintf(line[n++], sizeof(line[0]), g_fmt_health,
-                     o->health, o->max_health);
+        snprintf(line[n++], sizeof(line[0]), g_fmt_health,
+                 o->stats.health, o->max_health);
+        if (n < 12)
+            snprintf(line[n++], sizeof(line[0]), g_fmt_speed,
+                     o->stats.speed);
+        if (n < 12)
+            snprintf(line[n++], sizeof(line[0]), g_fmt_endurance,
+                     o->stats.endurance);
+        if (n < 12)
+            snprintf(line[n++], sizeof(line[0]), g_fmt_accuracy,
+                     o->stats.accuracy);
+        if (n < 12)
+            snprintf(line[n++], sizeof(line[0]), g_fmt_morale,
+                     o->stats.morale);
+        if (n < 12)
+            snprintf(line[n++], sizeof(line[0]), g_fmt_armor,
+                     o->stats.armor);
+        if (n < 12) {
+            inventory *inv = map_object_inventory(&g_map, g_selected);
+            float kg = inventory_weight_kg(inv);
+            snprintf(line[n++], sizeof(line[0]), g_fmt_steps,
+                     objects_char_steps(&o->stats, kg));
+        }
+        if (n < 12)
+            snprintf(line[n++], sizeof(line[0]), g_fmt_commander,
+                     o->stats.commander ? g_txt_yes : g_txt_no);
 
         /* тайл персонажа 128x128 (img/hudimages.png) в правом верхнем
          * углу окна — по текущему количеству здоровья */
@@ -466,6 +547,10 @@ static void game_draw(void)
 
     if (g_info_open)
         draw_info_window();
+
+    /* окно инвентаря юнита игрока (левая половина окна; I) */
+    if (inventory_ui_is_open())
+        inventory_ui_draw();
 
     plat_flip_frame();
 }

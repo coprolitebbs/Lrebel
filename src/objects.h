@@ -36,22 +36,31 @@
  * Типы персонажей (фракции) описываются секциями {char_type1}..{char_type3}:
  *   name=Название
  *   control=player | cpu
- *   health=Здоровье персонажа (по умолчанию 100)
  *   hud_img_row_full / hud_img_col_full — координаты тайла персонажа
  *              128x128 в img/hudimages.png при полном здоровье;
  *   hud_img_row_damaged / hud_img_col_damaged — тайл поврежденного;
  *   hud_img_row_dead / hud_img_col_dead — тайл мертвого (трупа).
  *              Без ключей используется тайл 3*faction+состояние.
+ * Боевые параметры персонажа (Скорость, Выносливость, Меткость, Мораль,
+ * Здоровье, Броня и флаг "Командир") задаются не в конфиге, а у каждого
+ * персонажа на карте: в редакторе при постановке персонажа они получают
+ * дефолтные значения (случайные в диапазонах по фракции и флагу
+ * "Командир" — как в Rebel Star DOS, см. map_char_stats), редактируются
+ * в окне параметров (клавиша P) и сохраняются в файл карты вместе с
+ * инвентарем; из карты они попадают в игру.
  * Конкретные персонажи — секциями {characterN}:
  *   name=Имя
  *   age=Возраст
  *   sex=male | female
  *   faction=Номер фракции 1..3 (секция {char_typeN})
  *   control=player | cpu (по умолчанию — как у фракции)
- *   steps=Дефолтное количество шагов за 1 ход
  *   vis_range=Дальность видимости — радиус круга (в элементах карты),
  *              который раскрывается вокруг персонажа ("туман войны");
  *              по умолчанию 12 (CHAR_DEFAULT_VIS_RANGE)
+ *   speed / endurance / accuracy / morale / health / armor — боевые
+ *              параметры 0..100 (по умолчанию — середина диапазона
+ *              обычного бойца фракции);
+ *   commander=0 | 1 — флаг "Командир" (по умолчанию 0)
  */
 #ifndef OBJECTS_H
 #define OBJECTS_H
@@ -72,6 +81,21 @@
 
 /* Размер большого тайла предмета/персонажа в img/hudimages.png. */
 #define OBJECT_HUD_IMG_PX 128
+
+/* Боевые параметры персонажа (как в Rebel Star DOS). Хранятся у каждого
+ * персонажа на карте (map_object.stats), сохраняются в файл карты вместе
+ * с инвентарем и попадают в игру; в редакторе редактируются в окне
+ * параметров (клавиша P). Все значения, кроме флага, — в пределах
+ * 0..100; Здоровье — текущее, максимум хранится рядом (max_health). */
+typedef struct map_char_stats {
+    int speed;     /* Скорость: база числа шагов за игровой ход          */
+    int endurance; /* Выносливость: позволяет держать темп движения      */
+    int accuracy;  /* Точность (Меткость)                                */
+    int morale;    /* Мораль                                             */
+    int health;    /* Здоровье (текущее)                                 */
+    int armor;     /* Броня                                              */
+    int commander; /* флаг "Командир": 1 — командир отряда               */
+} map_char_stats;
 
 /* Класс подбираемого объекта. */
 typedef enum {
@@ -127,6 +151,20 @@ typedef enum {
 /* Пол персонажа. */
 enum { CHAR_SEX_MALE = 0, CHAR_SEX_FEMALE, CHAR_SEX_COUNT };
 
+/* Выбранный параметр в окне параметров (клавиша P): порядок совпадает
+ * с порядком строк в окне; CHAR_PARAM_COMMANDER выбирается кликом и
+ * переключается, клавишами +/- не меняется. */
+typedef enum {
+    CHAR_PARAM_SPEED = 0,
+    CHAR_PARAM_ENDURANCE,
+    CHAR_PARAM_ACCURACY,
+    CHAR_PARAM_MORALE,
+    CHAR_PARAM_HEALTH,
+    CHAR_PARAM_ARMOR,
+    CHAR_PARAM_COMMANDER,
+    CHAR_PARAM_COUNT
+} char_param;
+
 /* Состояние персонажа для выбора тайла 128x128 (img/hudimages.png):
  * полное здоровье, частичное, нулевое (мертв). */
 typedef enum {
@@ -143,10 +181,10 @@ typedef struct character_desc {
     int          sex;                   /* CHAR_SEX_*                   */
     char_faction faction;               /* фракция (тип персонажа)      */
     int          is_player;             /* 1 — управляется игроком      */
-    int          steps_per_turn;        /* дефолтных шагов за 1 ход     */
     int          vis_range;             /* дальность видимости: радиус круга
                                          * (элементов карты), который раскрывается
                                          * вокруг персонажа ("туман войны")     */
+    map_char_stats stats;               /* боевые параметры (Rebel Star DOS) */
 } character_desc;
 
 /* Загружает описания из config/objects.cfg: объекты ({objectN}), фракции
@@ -167,9 +205,18 @@ const character_desc *objects_character(int index);
 const char *objects_faction_name(char_faction faction);
 int         objects_faction_is_player(char_faction faction);
 
-/* Здоровье персонажа фракции (максимальное и текущее при появлении на
- * карте; config/objects.cfg, ключ health секции {char_typeN}). */
-int objects_faction_health(char_faction faction);
+/* Дефолтные боевые параметры персонажа фракции при постановке на карту
+ * в редакторе: случайные значения в диапазонах Rebel Star DOS — для
+ * обычных бойцов и командиров (флаг commander) фракций "Спецназ-9" и
+ * повстанцев, для роботов — свой набор (флаг игнорируется).
+ * Здоровье из результата записывается и в max_health (см. map_object). */
+void objects_faction_default_stats(char_faction faction, int commander,
+                                   map_char_stats *out);
+
+/* Число шагов персонажа за игровой ход (механика Rebel Star DOS): база —
+ * Скорость, поправка на Выносливость (множитель 0.5..1.0) и штраф за вес
+ * снаряжения (1 шаг за каждые 10 кг). Минимум — 1 шаг. */
+int objects_char_steps(const map_char_stats *st, float weight_kg);
 
 /* Координаты тайла персонажа фракции 128x128 в img/hudimages.png для
  * состояния st (полное/частичное/нулевое здоровье) — в пикселях атласа

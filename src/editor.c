@@ -30,6 +30,10 @@
 #define EDITOR_KEY_SPACE 32
 #define EDITOR_KEY_DEL   127 /* ASCII-код клавиши DEL (SDLK_DELETE)      */
 
+/* --- окно параметров персонажа (P) --- */
+#define PARAMS_ROW_H     46  /* высота строки параметра, пикселей        */
+#define PARAMS_HEADER_H  130 /* заголовок + строки описания до параметров */
+
 /* --- режимы редактора (клавиши 1-4) --- */
 enum {
     ED_MODE_TILES = 0,  /* поверхности и стены, слои 1-3 */
@@ -44,6 +48,7 @@ enum {
     ED_MODAL_NONE = 0,
     ED_MODAL_PICKER,    /* выбор тайла/объекта/ассета (SPACE)            */
     ED_MODAL_INVPICK,   /* выбор предмета для инвентаря (O)              */
+    ED_MODAL_PARAMS,    /* параметры персонажа (P)                       */
     ED_MODAL_CONFIRM
 };
 
@@ -67,9 +72,13 @@ static int g_cur_asset = 0;    /* выбранный ассет (номер)    
 
 /* "текущий выбранный объект" (индекс в g_map.objects) или -1: выбирается
  * ПКМ в режиме объектов, при постановке ЛКМ, удаляется по DEL; у каждого
- * объекта карты свой инвентарь (создается лениво при первом обращении) */
+ * объекта карты свой инвентарь (создается лениво, см. map_object_inventory,
+ * и сохраняется в файл карты вместе с объектом) */
 static int g_selected = -1;
-static inventory *g_obj_inv[MAP_OBJECTS_MAX];
+
+/* выбранный параметр в окне параметров (P) или -1; выбирается кликом,
+ * изменяется клавишами +/- в пределах 0..100 (только в редакторе) */
+static int g_param_sel = -1;
 
 static int      g_modal = ED_MODAL_NONE;
 static int      g_picker_scroll = 0; /* верхняя строка окна выбора */
@@ -95,6 +104,18 @@ static char g_fmt_sel_obj[32];     /* "объект %d"                       */
 static char g_txt_confirm_q[96];
 static char g_txt_btn_save[32], g_txt_btn_cancel[32];
 
+/* --- окно параметров (P): надписи --- */
+static char g_fmt_ctrl[64];        /* "Управление: %s"                  */
+static char g_fmt_vis[80];         /* "Дальность видимости: %d"         */
+static char g_fmt_steps[64];       /* "Шагов за ход: %d"                */
+static char g_txt_params[CHAR_PARAM_COUNT][64]; /* названия параметров  */
+static char g_txt_yes[16], g_txt_no[16];        /* "да"/"нет"           */
+static char g_txt_params_hint[160];             /* подсказка окна       */
+static char g_txt_player[16], g_txt_cpu[16];    /* "игрок"/"компьютер"  */
+
+/* прототип: используется окном параметров (определен в разделе правок) */
+static int is_char_type(int type);
+
 static void init_strings(void)
 {
     utf8_to_win1251("Поверхности и стены", g_txt_modes[0],
@@ -112,7 +133,8 @@ static void init_strings(void)
     utf8_to_win1251("WASD камера | SPACE выбор | ЛКМ поставить, ПКМ выбрать "
                     "| DEL удалить",
                     g_txt_hint_objects[0], sizeof(g_txt_hint_objects[0]));
-    utf8_to_win1251("P инвентарь | O предмет | Ctrl+S сохранить | ESC выход",
+    utf8_to_win1251("I инвентарь | P параметры | O предмет | Ctrl+S сохранить "
+                    "| ESC выход",
                     g_txt_hint_objects[1], sizeof(g_txt_hint_objects[1]));
     utf8_to_win1251("Режим: %s | Слой: %d/3 | Тайл: %d | %s",
                     g_fmt_bar_tiles, sizeof(g_fmt_bar_tiles));
@@ -142,6 +164,31 @@ static void init_strings(void)
                     g_txt_confirm_q, sizeof(g_txt_confirm_q));
     utf8_to_win1251("Сохранить", g_txt_btn_save, sizeof(g_txt_btn_save));
     utf8_to_win1251("Отменить", g_txt_btn_cancel, sizeof(g_txt_btn_cancel));
+
+    /* --- окно параметров (P) --- */
+    utf8_to_win1251("Управление: %s", g_fmt_ctrl, sizeof(g_fmt_ctrl));
+    utf8_to_win1251("Дальность видимости: %d", g_fmt_vis, sizeof(g_fmt_vis));
+    utf8_to_win1251("Шагов за ход: %d", g_fmt_steps, sizeof(g_fmt_steps));
+    utf8_to_win1251("Скорость", g_txt_params[CHAR_PARAM_SPEED],
+                    sizeof(g_txt_params[0]));
+    utf8_to_win1251("Выносливость", g_txt_params[CHAR_PARAM_ENDURANCE],
+                    sizeof(g_txt_params[0]));
+    utf8_to_win1251("Меткость", g_txt_params[CHAR_PARAM_ACCURACY],
+                    sizeof(g_txt_params[0]));
+    utf8_to_win1251("Мораль", g_txt_params[CHAR_PARAM_MORALE],
+                    sizeof(g_txt_params[0]));
+    utf8_to_win1251("Здоровье", g_txt_params[CHAR_PARAM_HEALTH],
+                    sizeof(g_txt_params[0]));
+    utf8_to_win1251("Броня", g_txt_params[CHAR_PARAM_ARMOR],
+                    sizeof(g_txt_params[0]));
+    utf8_to_win1251("Командир", g_txt_params[CHAR_PARAM_COMMANDER],
+                    sizeof(g_txt_params[0]));
+    utf8_to_win1251("да", g_txt_yes, sizeof(g_txt_yes));
+    utf8_to_win1251("нет", g_txt_no, sizeof(g_txt_no));
+    utf8_to_win1251("игрок", g_txt_player, sizeof(g_txt_player));
+    utf8_to_win1251("компьютер", g_txt_cpu, sizeof(g_txt_cpu));
+    utf8_to_win1251("Клик - выбор параметра | +/- изменить | P или ESC закрыть",
+                    g_txt_params_hint, sizeof(g_txt_params_hint));
 }
 
 /* ------------------------------------------------------------- выборка */
@@ -329,20 +376,88 @@ static void open_confirm(void)
                   bw, bh, g_txt_btn_cancel, cb_confirm_cancel);
 }
 
+/* -------------------------------------------------- окно параметров (P) */
+
+/* Прямоугольник окна параметров (общий для отрисовки и кликов). */
+static void params_rect(int *px, int *py, int *pw, int *ph)
+{
+    int sw = plat_screen_width();
+    int sh = plat_screen_height();
+    *pw = 620;
+    *ph = PARAMS_HEADER_H + CHAR_PARAM_COUNT * PARAMS_ROW_H + 64;
+    if (*pw > sw - 32)
+        *pw = sw - 32;
+    if (*ph > sh - 32)
+        *ph = sh - 32;
+    *px = (sw - *pw) / 2;
+    *py = (sh - *ph) / 2;
+}
+
+/* +/- в окне параметров: изменение выбранного параметра в пределах
+ * 0..100; Здоровье меняется вместе с максимумом (в редакторе повреждений
+ * нет). В обычной игре параметры не редактируются (см. game.c). */
+static void editor_param_adjust(int d)
+{
+    if (g_selected < 0 || g_selected >= g_map.object_count || g_param_sel < 0)
+        return;
+    if (g_param_sel >= CHAR_PARAM_COMMANDER)
+        return; /* флаг "Командир" переключается кликом */
+    map_object *o = &g_map.objects[g_selected];
+    int *field = NULL;
+    switch (g_param_sel) {
+    case CHAR_PARAM_SPEED:     field = &o->stats.speed;     break;
+    case CHAR_PARAM_ENDURANCE: field = &o->stats.endurance; break;
+    case CHAR_PARAM_ACCURACY:  field = &o->stats.accuracy;  break;
+    case CHAR_PARAM_MORALE:    field = &o->stats.morale;    break;
+    case CHAR_PARAM_HEALTH:    field = &o->stats.health;    break;
+    case CHAR_PARAM_ARMOR:     field = &o->stats.armor;     break;
+    default:
+        return;
+    }
+    *field += d;
+    if (*field < 0)
+        *field = 0;
+    if (*field > 100)
+        *field = 100;
+    if (g_param_sel == CHAR_PARAM_HEALTH)
+        o->max_health = o->stats.health;
+    g_map.modified = 1;
+}
+
+/* Клик в окне параметров: выбор строки параметра (рамка); клик по строке
+ * "Командир" переключает флаг. */
+static void editor_params_click(void)
+{
+    int mx, my;
+    plat_mouse_pos(&mx, &my);
+    int px, py, pw, ph;
+    params_rect(&px, &py, &pw, &ph);
+    if (mx < px || mx >= px + pw || my < py || my >= py + ph)
+        return;
+    if (g_selected < 0 || g_selected >= g_map.object_count)
+        return;
+    const map_object *o = &g_map.objects[g_selected];
+    if (!is_char_type(o->type))
+        return; /* у предметов параметров нет */
+    int idx = (my - (py + PARAMS_HEADER_H)) / PARAMS_ROW_H;
+    if (idx < 0 || idx >= CHAR_PARAM_COUNT)
+        return; /* клик по заголовку или подсказке */
+    if (idx == CHAR_PARAM_COMMANDER) {
+        map_object *om = &g_map.objects[g_selected];
+        om->stats.commander = om->stats.commander ? 0 : 1;
+        g_map.modified = 1;
+        return;
+    }
+    g_param_sel = idx;
+}
+
 /* ------------------------------------------------------------- правки */
 
-/* Инвентарь объекта карты (создается лениво при первом обращении); NULL
- * при неверном индексе или нехватке памяти. */
-static inventory *editor_obj_inventory(int idx)
+/* Тип — персонаж (0..2)? */
+static int is_char_type(int type)
 {
-    if (idx < 0 || idx >= g_map.object_count)
-        return NULL;
-    if (!g_obj_inv[idx]) {
-        g_obj_inv[idx] = (inventory *)malloc(sizeof(inventory));
-        if (g_obj_inv[idx])
-            inventory_init(g_obj_inv[idx]);
-    }
-    return g_obj_inv[idx];
+    return type >= OBJ_TYPE_CHAR_FIRST &&
+           type < OBJ_TYPE_CHAR_FIRST + OBJ_TYPE_CHAR_COUNT;
 }
 
 static void editor_set_tile(int cx, int cy)
@@ -414,20 +529,16 @@ static void editor_select_object(int cx, int cy)
     g_selected = map_object_index_at(&g_map, cx, cy);
 }
 
-/* DEL: удаление "текущего выбранного объекта"; выбор сбрасывается. */
+/* DEL: удаление "текущего выбранного объекта"; выбор сбрасывается.
+ * Инвентарь удаляемого объекта освобождается, инвентари сдвигаются
+ * вместе с объектами (map_object_remove_index). */
 static void editor_delete_selected(void)
 {
     if (g_selected < 0 || g_selected >= g_map.object_count)
         return;
-    int idx = g_selected;
-    inventory_ui_close(); /* окно инвентаря закрывается вместе с объектом */
-    free(g_obj_inv[idx]); /* инвентарь удаляемого объекта                  */
-    g_obj_inv[idx] = NULL;
-    map_object_remove_index(&g_map, idx);
-    /* инвентари сдвигаются вслед за объектами (индексы сместились)      */
-    for (int i = idx; i < MAP_OBJECTS_MAX - 1; i++)
-        g_obj_inv[i] = g_obj_inv[i + 1];
-    g_obj_inv[MAP_OBJECTS_MAX - 1] = NULL;
+    inventory_ui_close(); /* окна инвентаря/параметров закрываются вместе */
+    editor_close_modals();
+    map_object_remove_index(&g_map, g_selected);
     g_selected = -1; /* объект удален — "текущий выбранный" сброшен      */
     g_map.modified = 1;
 }
@@ -468,6 +579,15 @@ static void editor_handle_keys(void)
     if (key == 0)
         return;
 
+    if (g_modal == ED_MODAL_PARAMS) {
+        /* окно параметров: +/- изменяет выбранный параметр (0..100)     */
+        if (key == '+' || key == '-')
+            editor_param_adjust(key == '+' ? 1 : -1);
+        else if (key == EDITOR_KEY_ESC || key == EDITOR_KEY_SPACE ||
+                 key == 'p' || key == 'P')
+            editor_close_modals();
+        return;
+    }
     if (g_modal == ED_MODAL_PICKER || g_modal == ED_MODAL_INVPICK) {
         if (key == '+')
             g_picker_scroll++;
@@ -508,18 +628,36 @@ static void editor_handle_keys(void)
         /* DEL: удалить "текущий выбранный объект" (если он есть)       */
         editor_delete_selected();
         break;
-    case 'p': case 'P':
-        /* P: окно инвентаря выбранного объекта в левой половине окна;
+    case 'i': case 'I':
+        /* I: окно инвентаря выбранного объекта в левой половине окна;
          * повторное нажатие закрывает окно */
         if (g_selected >= 0) {
+            if (g_modal == ED_MODAL_PARAMS)
+                editor_close_modals();
             if (inventory_ui_is_open()) {
                 inventory_ui_close();
             } else {
-                inventory *inv = editor_obj_inventory(g_selected);
+                inventory *inv = map_object_inventory(&g_map, g_selected);
                 if (inv)
                     inventory_ui_open(inv, g_hudimg, 0, 0,
                                       plat_screen_width() / 2,
                                       plat_screen_height());
+            }
+        }
+        break;
+    case 'p': case 'P':
+        /* P: окно параметров выбранного персонажа — описание и боевые
+         * параметры (в редакторе они редактируются); у предметов —
+         * описание предмета. Повторное нажатие закрывает окно */
+        if (g_selected >= 0) {
+            if (inventory_ui_is_open())
+                inventory_ui_close();
+            if (g_modal == ED_MODAL_PARAMS)
+                editor_close_modals();
+            else {
+                g_modal = ED_MODAL_PARAMS;
+                g_param_sel = -1;
+                ui_buttons_clear();
             }
         }
         break;
@@ -538,8 +676,11 @@ static void editor_handle_keys(void)
         }
         break;
     case EDITOR_KEY_ESC:
-        /* первый ESC закрывает окно инвентаря, далее — как обычно */
-        if (inventory_ui_is_open())
+        /* первый ESC закрывает окно параметров или инвентаря, далее —
+         * как обычно */
+        if (g_modal == ED_MODAL_PARAMS)
+            editor_close_modals();
+        else if (inventory_ui_is_open())
             inventory_ui_close();
         else if (!g_map.modified)
             g_quit = 1; /* сохранена и не менялась — выходим */
@@ -575,7 +716,7 @@ static void editor_picker_click(void)
          * есть место под его габариты (окно остается открытым — можно
          * добавить несколько предметов); функция сканирования места и
          * добавления — inventory_add_item (inventory.h) */
-        inventory *inv = editor_obj_inventory(g_selected);
+        inventory *inv = map_object_inventory(&g_map, g_selected);
         const game_object_desc *d = objects_desc(idx);
         if (!inv || !d)
             return;
@@ -601,6 +742,12 @@ static void editor_handle_mouse(void)
 
     if (g_modal == ED_MODAL_CONFIRM)
         return; /* клики ушли в кнопки окна */
+    if (g_modal == ED_MODAL_PARAMS) {
+        /* окно параметров забирает мышь: выбор строки параметра        */
+        if (press)
+            editor_params_click();
+        return;
+    }
     if (g_modal == ED_MODAL_PICKER || g_modal == ED_MODAL_INVPICK) {
         if (press)
             editor_picker_click();
@@ -776,6 +923,93 @@ static void draw_confirm(void)
     ui_buttons_draw(); /* кнопки добавлены в open_confirm() */
 }
 
+/* Окно параметров (P): описание персонажа и боевые параметры. В редакторе
+ * параметры редактируются (выбор кликом, изменение +/-); у предметов
+ * показывается только описание. */
+static void draw_params(void)
+{
+    int px, py, pw, ph;
+    params_rect(&px, &py, &pw, &ph);
+    ui_window_draw(px, py, pw, ph);
+    if (g_selected < 0 || g_selected >= g_map.object_count)
+        return;
+    const map_object *o = &g_map.objects[g_selected];
+
+    int sh = plat_screen_height();
+    float size_t = 0.02f;
+    float size_l = 0.016f;
+    int lh = (int)(size_l * (float)sh) + 8;
+    int x = px + 24;
+    int y = py + 20;
+    char buf[192];
+
+    if (!is_char_type(o->type)) {
+        /* предмет: название и краткое описание (боевых параметров нет) */
+        const game_object_desc *d =
+            objects_desc(o->type - OBJ_TYPE_WEAPON_FIRST);
+        if (!d)
+            return;
+        draw_string(d->name, x, y, size_t);
+        y += lh + 6;
+        for (int k = 0; k < OBJECT_DESC_LINES; k++)
+            if (d->desc[k][0]) {
+                draw_string(d->desc[k], x, y, size_l);
+                y += lh;
+            }
+        return;
+    }
+
+    /* --- персонаж: описание, затем строки боевых параметров --- */
+    draw_string(objects_faction_name((char_faction)o->type), x, y, size_t);
+    y += lh + 6;
+    snprintf(buf, sizeof(buf), g_fmt_ctrl,
+             map_char_types[o->type].player ? g_txt_player : g_txt_cpu);
+    draw_string(buf, x, y, size_l);
+    y += lh;
+    snprintf(buf, sizeof(buf), g_fmt_vis, CHAR_DEFAULT_VIS_RANGE);
+    draw_string(buf, x, y, size_l);
+    y += lh;
+    {
+        inventory *inv = map_object_inventory(&g_map, g_selected);
+        float kg = inventory_weight_kg(inv);
+        snprintf(buf, sizeof(buf), g_fmt_steps,
+                 objects_char_steps(&o->stats, kg));
+        draw_string(buf, x, y, size_l);
+        y += lh;
+    }
+
+    int ry = py + PARAMS_HEADER_H;
+    int rw = pw - 48;
+    for (int p = 0; p < CHAR_PARAM_COUNT; p++) {
+        if (ry + PARAMS_ROW_H > py + ph - 40)
+            break;
+        char val[32];
+        if (p == CHAR_PARAM_COMMANDER)
+            snprintf(val, sizeof(val), "%s",
+                     o->stats.commander ? g_txt_yes : g_txt_no);
+        else {
+            int v = 0;
+            switch (p) {
+            case CHAR_PARAM_SPEED:     v = o->stats.speed;     break;
+            case CHAR_PARAM_ENDURANCE: v = o->stats.endurance; break;
+            case CHAR_PARAM_ACCURACY:  v = o->stats.accuracy;  break;
+            case CHAR_PARAM_MORALE:    v = o->stats.morale;    break;
+            case CHAR_PARAM_HEALTH:    v = o->stats.health;    break;
+            case CHAR_PARAM_ARMOR:     v = o->stats.armor;     break;
+            default: break;
+            }
+            snprintf(val, sizeof(val), "%d", v);
+        }
+        draw_string(g_txt_params[p], x, ry + (PARAMS_ROW_H - lh) / 2, size_l);
+        draw_string(val, x + 260, ry + (PARAMS_ROW_H - lh) / 2, size_l);
+        /* выбранный параметр подсвечивается рамкой */
+        if (g_param_sel == p)
+            plat_draw_rect_frame(x - 8, ry, rw, PARAMS_ROW_H, 250, 220, 120);
+        ry += PARAMS_ROW_H;
+    }
+    draw_string(g_txt_params_hint, x, py + ph - 30, 0.014f);
+}
+
 /* Мигающая рамка вокруг "текущего выбранного объекта" (светло-синяя,
  * платформенная функция plat_draw_blink_frame). */
 static void draw_selected_frame(void)
@@ -805,6 +1039,8 @@ static void editor_draw(void)
         inventory_ui_draw();
     if (g_modal == ED_MODAL_PICKER || g_modal == ED_MODAL_INVPICK)
         draw_picker(); /* поверх окна инвентаря */
+    else if (g_modal == ED_MODAL_PARAMS)
+        draw_params();
     else if (g_modal == ED_MODAL_CONFIRM)
         draw_confirm();
     plat_flip_frame();
@@ -871,7 +1107,7 @@ int editor_init(const char *map_filename)
     g_cur_object = 0;
     g_cur_asset = 0;
     g_selected = -1; /* "текущий выбранный объект" сброшен              */
-    memset(g_obj_inv, 0, sizeof(g_obj_inv)); /* инвентари объектов      */
+    g_param_sel = -1; /* выбранный параметр окна P сброшен               */
     g_modal = ED_MODAL_NONE;
     g_quit = 0;
     init_strings();
@@ -903,12 +1139,10 @@ void editor_run(void)
 void editor_shutdown(void)
 {
     inventory_ui_close(); /* окно инвентаря закрывается раньше инвентарей */
-    for (int i = 0; i < MAP_OBJECTS_MAX; i++) {
-        free(g_obj_inv[i]);
-        g_obj_inv[i] = NULL;
-    }
+    editor_close_modals();
     g_selected = -1;
-    map_free(&g_map);
+    g_param_sel = -1;
+    map_free(&g_map); /* вместе с инвентарями объектов (map_inventories_clear) */
     plat_free_image(g_tiles);
     g_tiles = NULL;
     plat_free_image(g_hudimg);

@@ -198,3 +198,16 @@ void inventory_remove(inventory *inv, inventory_item *it)
         inv->selected_weapon = NULL;
     memset(it, 0, sizeof(*it)); /* proto == NULL — слот свободен */
 }
+
+float inventory_weight_kg(const inventory *inv)
+{
+    if (!inv)
+        return 0.0f;
+    float kg = 0.0f;
+    for (int i = 0; i < INVENTORY_ITEMS_MAX; i++) {
+        const inventory_item *it = &inv->items_arr[i];
+        if (it->proto)
+            kg += it->proto->weight_kg * (float)it->count;
+    }
+    return kg;
+}
