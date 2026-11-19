@@ -23,13 +23,26 @@
  *   inv_size_x / inv_size_y — линейные размеры предмета в инвентаре в
  *              клетках (по умолчанию: оружие — 1x2, боеприпасы, аптечка
  *              и поверапы — 1x1);
- *   inv_img_row / inv_img_col — ряд и колонка тайла-картинки предмета в
- *              инвентаре в img/gtiles.png (по умолчанию — первый тайл
- *              объекта: ряд 4, колонка N); при загрузке из них
- *              вычисляется пиксельный прямоугольник inv_img_*.
+ *   inv_img_row / inv_img_col — ряд и колонка картинки предмета в
+ *              инвентаре в img/hudimages.png, в клетках сетки 32x32
+ *              (картинка занимает inv_size_x x inv_size_y клеток; по
+ *              умолчанию — ряд 13, колонка N); при загрузке из них
+ *              вычисляется пиксельный прямоугольник inv_img_*;
+ *   hud_img_row / hud_img_col — ряд и колонка большого тайла предмета
+ *              128x128 в img/hudimages.png (1 — верхний левый; тайлы
+ *              нумеруются по строкам сверху вниз). Если ключи не заданы,
+ *              большого тайла у предмета нет.
  *
- * Типы персонажей (фракции) описываются секциями {char_type1}..{char_type3}
- * (name, control=player|cpu), конкретные персонажи — секциями {characterN}:
+ * Типы персонажей (фракции) описываются секциями {char_type1}..{char_type3}:
+ *   name=Название
+ *   control=player | cpu
+ *   health=Здоровье персонажа (по умолчанию 100)
+ *   hud_img_row_full / hud_img_col_full — координаты тайла персонажа
+ *              128x128 в img/hudimages.png при полном здоровье;
+ *   hud_img_row_damaged / hud_img_col_damaged — тайл поврежденного;
+ *   hud_img_row_dead / hud_img_col_dead — тайл мертвого (трупа).
+ *              Без ключей используется тайл 3*faction+состояние.
+ * Конкретные персонажи — секциями {characterN}:
  *   name=Имя
  *   age=Возраст
  *   sex=male | female
@@ -53,9 +66,12 @@
  * "тумана войны" вокруг юнита, элементов карты). */
 #define CHAR_DEFAULT_VIS_RANGE 12
 
-/* Ряд img/gtiles.png, в котором лежат тайлы подбираемых объектов
- * (по умолчанию картинка предмета в инвентаре — его первый тайл). */
-#define OBJECT_INV_IMG_ROW 4
+/* Ряд img/hudimages.png (в клетках сетки 32x32), в котором лежат
+ * картинки предметов для инвентаря (ряд 13 = y 384 пикселя). */
+#define OBJECT_INV_IMG_ROW 13
+
+/* Размер большого тайла предмета/персонажа в img/hudimages.png. */
+#define OBJECT_HUD_IMG_PX 128
 
 /* Класс подбираемого объекта. */
 typedef enum {
@@ -90,11 +106,14 @@ typedef struct game_object_desc {
     /* --- инвентарь --- */
     int inventory_size_x; /* горизонтальный размер предмета в клетках        */
     int inventory_size_y; /* вертикальный размер предмета в клетках          */
-    /* Картинка предмета в инвентаре — прямоугольник в общем атласе тайлов
-     * img/gtiles.png, пиксели. Пока это первый тайл объекта (ряд 4, колонка
-     * N); нормальные картинки будут нарисованы позже и вписаны в конфиг
-     * ключами inv_img_row/inv_img_col. */
+    /* Картинка предмета в инвентаре — прямоугольник в img/hudimages.png
+     * (клетки сетки 32x32, размер inv_size_x x inv_size_y клеток;
+     * конфиг — ключи inv_img_row/inv_img_col), пиксели.
+     * Большой тайл предмета 128x128 в том же атласе — прямоугольник
+     * hud_img_* (конфиг — ключи hud_img_row/hud_img_col); hud_img_w == 0
+     * означает, что большого тайла у предмета нет. */
     int inv_img_x, inv_img_y, inv_img_w, inv_img_h;
+    int hud_img_x, hud_img_y, hud_img_w, hud_img_h;
 } game_object_desc;
 
 /* Фракция (тип персонажа); названия и флаг player — в config/objects.cfg. */
@@ -107,6 +126,15 @@ typedef enum {
 
 /* Пол персонажа. */
 enum { CHAR_SEX_MALE = 0, CHAR_SEX_FEMALE, CHAR_SEX_COUNT };
+
+/* Состояние персонажа для выбора тайла 128x128 (img/hudimages.png):
+ * полное здоровье, частичное, нулевое (мертв). */
+typedef enum {
+    CHAR_TILE_FULL = 0,
+    CHAR_TILE_DAMAGED,
+    CHAR_TILE_DEAD,
+    CHAR_TILE_STATE_COUNT
+} char_tile_state;
 
 /* Описание персонажа (секция {characterN} в config/objects.cfg). */
 typedef struct character_desc {
@@ -138,5 +166,15 @@ const character_desc *objects_character(int index);
 /* Название фракции (Windows-1251) и флаг управления игроком. */
 const char *objects_faction_name(char_faction faction);
 int         objects_faction_is_player(char_faction faction);
+
+/* Здоровье персонажа фракции (максимальное и текущее при появлении на
+ * карте; config/objects.cfg, ключ health секции {char_typeN}). */
+int objects_faction_health(char_faction faction);
+
+/* Координаты тайла персонажа фракции 128x128 в img/hudimages.png для
+ * состояния st (полное/частичное/нулевое здоровье) — в пикселях атласа
+ * (левый верхний угол). 0 при успехе, -1 если координаты не заданы. */
+int objects_faction_hud_img(char_faction faction, char_tile_state st,
+                            int *x, int *y);
 
 #endif /* OBJECTS_H */

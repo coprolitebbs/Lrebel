@@ -52,6 +52,14 @@ void plat_draw_image(const plat_image *img,
                      int src_x, int src_y, int src_w, int src_h,
                      int dst_x, int dst_y, int dst_w, int dst_h);
 
+/* То же, но фрагмент дополнительно поворачивается на quarter_turns
+ * поворотов на 90 градусов по часовой стрелке вокруг центра конечного
+ * прямоугольника (для повернутых предметов в инвентаре). */
+void plat_draw_image_rot(const plat_image *img,
+                         int src_x, int src_y, int src_w, int src_h,
+                         int dst_x, int dst_y, int dst_w, int dst_h,
+                         int quarter_turns);
+
 /* Завершает кадр и показывает его на экране. */
 void plat_flip_frame(void);
 

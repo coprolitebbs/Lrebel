@@ -21,6 +21,7 @@
 
 #define GAME_CFG        "config/editor.cfg" /* общий реестр с редактором  */
 #define GTILES_PATH     "img/gtiles.png"
+#define HUDIMG_PATH     "img/hudimages.png" /* тайлы HUD/персонажей        */
 #define MAP_DIR         "maps"
 
 #define GAME_KEY_ESC    27  /* ASCII-код клавиши ESC */
@@ -31,6 +32,7 @@ enum { GAME_SIDE_PLAYER = 0, GAME_SIDE_CPU, GAME_SIDE_COUNT };
 /* --------------------------------------------------------------- состояние */
 
 static plat_image *g_tiles = NULL;
+static plat_image *g_hudimg = NULL; /* атлас img/hudimages.png             */
 static game_map    g_map;
 static camera      g_cam;
 static char        g_map_path[256];
@@ -62,6 +64,7 @@ static char g_fmt_reload[96];       /* "Перезарядка (в ходах): 
 static char g_fmt_mag[64];          /* "Магазин: %d"                       */
 static char g_fmt_count[64];        /* "В наборе: %d из %d"                */
 static char g_fmt_weight[64];       /* "Вес: %.1f кг"                      */
+static char g_fmt_health[64];       /* "Здоровье: %d/%d"                   */
 static char g_txt_class[OBJ_CLASS_COUNT][32]; /* "Тип: оружие" и т.п.     */
 static char g_txt_btn_close[16];    /* глиф-крестик окна описания          */
 
@@ -83,6 +86,7 @@ static void init_strings(void)
     utf8_to_win1251("Магазин: %d", g_fmt_mag, sizeof(g_fmt_mag));
     utf8_to_win1251("В наборе: %d из %d", g_fmt_count, sizeof(g_fmt_count));
     utf8_to_win1251("Вес: %.1f кг", g_fmt_weight, sizeof(g_fmt_weight));
+    utf8_to_win1251("Здоровье: %d/%d", g_fmt_health, sizeof(g_fmt_health));
     utf8_to_win1251("Тип: оружие", g_txt_class[OBJ_CLASS_WEAPON],
                     sizeof(g_txt_class[0]));
     utf8_to_win1251("Тип: боеприпас", g_txt_class[OBJ_CLASS_AMMO],
@@ -328,6 +332,17 @@ static void draw_top_bar(void)
     }
 }
 
+/* Тайл персонажа 128x128 в окне описания — по состоянию здоровья:
+ * полное здоровье, частичное или нулевое (мертв). */
+static char_tile_state char_tile_state_of(const map_object *o)
+{
+    if (o->health <= 0)
+        return CHAR_TILE_DEAD;
+    if (o->health < o->max_health)
+        return CHAR_TILE_DAMAGED;
+    return CHAR_TILE_FULL;
+}
+
 /* Окно описания выбранного объекта — в правой половине окна игры. */
 static void draw_info_window(void)
 {
@@ -346,12 +361,32 @@ static void draw_info_window(void)
     if (is_unit_type(o->type)) {
         /* юнит: на карте пока только тип персонажа (фракция); конкретные
          * описания {characterN} будут привязываться на следующих этапах */
-        const char *faction = objects_faction_name((char_faction)o->type);
-        snprintf(title, sizeof(title), "%s", faction ? faction : "?");
+        char_faction faction = (char_faction)o->type;
+        const char *fname = objects_faction_name(faction);
+        snprintf(title, sizeof(title), "%s", fname ? fname : "?");
         snprintf(line[n++], sizeof(line[0]), g_fmt_ctrl,
                  map_char_types[o->type].player
                      ? g_txt_turn_player : g_txt_turn_cpu);
         snprintf(line[n++], sizeof(line[0]), g_fmt_vis, unit_vis_range());
+        if (n < 8)
+            snprintf(line[n++], sizeof(line[0]), g_fmt_health,
+                     o->health, o->max_health);
+
+        /* тайл персонажа 128x128 (img/hudimages.png) в правом верхнем
+         * углу окна — по текущему количеству здоровья */
+        int tx_img, ty_img;
+        if (g_hudimg &&
+            objects_faction_hud_img(faction, char_tile_state_of(o),
+                                    &tx_img, &ty_img) == 0) {
+            int isz = ww / 3;
+            if (isz > wh / 3)
+                isz = wh / 3;
+            if (isz > OBJECT_HUD_IMG_PX * 2)
+                isz = OBJECT_HUD_IMG_PX * 2;
+            plat_draw_image(g_hudimg, tx_img, ty_img,
+                            OBJECT_HUD_IMG_PX, OBJECT_HUD_IMG_PX,
+                            wx + ww - isz - 24, wy + 44, isz, isz);
+        }
     } else {
         const game_object_desc *d =
             objects_desc(o->type - OBJ_TYPE_WEAPON_FIRST);
@@ -455,10 +490,18 @@ int game_init(const char *map_filename)
     if (map_registry_init(GAME_CFG) != 0)
         return -1;
 
-    /* тайлы загружаются с color key (черный фон тайловых листов прозрачен) */
+    /* тайлы загружаются с color key (черный фон тайловых листов прозрачен);
+     * атлас HUD нужен для тайлов персонажей в окне описания */
     g_tiles = plat_load_image_colorkey(GTILES_PATH, 0, 0, 0);
     if (!g_tiles) {
         fprintf(stderr, "game: не удалось загрузить '%s'\n", GTILES_PATH);
+        return -1;
+    }
+    g_hudimg = plat_load_image_colorkey(HUDIMG_PATH, 0, 0, 0);
+    if (!g_hudimg) {
+        fprintf(stderr, "game: не удалось загрузить '%s'\n", HUDIMG_PATH);
+        plat_free_image(g_tiles);
+        g_tiles = NULL;
         return -1;
     }
 
@@ -467,6 +510,8 @@ int game_init(const char *map_filename)
         fprintf(stderr, "game: карта '%s' не загружена\n", g_map_path);
         plat_free_image(g_tiles);
         g_tiles = NULL;
+        plat_free_image(g_hudimg);
+        g_hudimg = NULL;
         return -1;
     }
 
@@ -495,6 +540,8 @@ int game_init(const char *map_filename)
             map_free(&g_map);
             plat_free_image(g_tiles);
             g_tiles = NULL;
+            plat_free_image(g_hudimg);
+            g_hudimg = NULL;
             return -1;
         }
     }
@@ -545,5 +592,7 @@ void game_shutdown(void)
     map_free(&g_map);
     plat_free_image(g_tiles);
     g_tiles = NULL;
+    plat_free_image(g_hudimg);
+    g_hudimg = NULL;
     ui_buttons_clear();
 }

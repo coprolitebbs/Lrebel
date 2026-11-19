@@ -2,9 +2,11 @@
  * inventory_ui.c — окно инвентаря: см. inventory_ui.h.
  *
  * Отрисовка: типовое окно (ui.h), сетка 15x15 (рамки ячеек), картинки
- * предметов — из атласа тайлов (game_object_desc.inv_img_*), слот
- * основного оружия внизу. Перетаскивание предметов мышью по правилам
- * классических инвентарей (см. inventory_ui.h).
+ * предметов — из атласа img/hudimages.png (прямоугольники inv_img_* из
+ * config/objects.cfg, повернутые предметы рисуются повернутыми), слот
+ * основного оружия внизу — большим тайлом hud_img_* 128x128.
+ * Перетаскивание предметов мышью по правилам классических инвентарей
+ * (см. inventory_ui.h).
  */
 #include <stdio.h>
 #include <string.h>
@@ -266,15 +268,30 @@ void inventory_ui_process_mouse(int left_pressed, int left_released,
 
 /* ------------------------------------------------------------- отрисовка */
 
-/* Картинка предмета в пикселях атласа. */
+/* Картинка предмета в пикселях атласа. Предмет, положенный в сетку
+ * с поворотом, рисуется повернутым на 90 градусов (прямоугольные
+ * картинки поворачиваются, квадратные рисуются как есть). */
 static void draw_item_image(const inventory_item *it,
                             int x, int y, int w, int h)
 {
     if (!g_atlas || !it || !it->proto)
         return;
     const game_object_desc *d = it->proto;
-    plat_draw_image(g_atlas, d->inv_img_x, d->inv_img_y,
-                    d->inv_img_w, d->inv_img_h, x, y, w, h);
+    int rot = (it->rotated && d->inv_img_w != d->inv_img_h) ? 1 : 0;
+    plat_draw_image_rot(g_atlas, d->inv_img_x, d->inv_img_y,
+                        d->inv_img_w, d->inv_img_h, x, y, w, h, rot);
+}
+
+/* Большой тайл предмета 128x128 (img/hudimages.png) в квадрат size x size;
+ * если большого тайла у предмета нет, ничего не рисует. */
+static void draw_item_hud_tile(const inventory_item *it,
+                               int x, int y, int size)
+{
+    if (!g_atlas || !it || !it->proto || it->proto->hud_img_w <= 0)
+        return;
+    const game_object_desc *d = it->proto;
+    plat_draw_image(g_atlas, d->hud_img_x, d->hud_img_y,
+                    d->hud_img_w, d->hud_img_h, x, y, size, size);
 }
 
 static void draw_grid_and_items(const inventory_ui_layout *lay)
@@ -333,10 +350,15 @@ static void draw_weapon_slot(const inventory_ui_layout *lay)
         return;
     }
 
-    /* картинка оружия слева, название и магазин — справа */
+    /* большой тайл выбранного оружия слева, название и магазин — справа;
+     * если большого тайла нет — картинка предмета из инвентаря */
     int img = (int)(0.55f * (float)lay->wp_h);
-    draw_item_image(w, lay->wp_x + 12,
-                    lay->wp_y + (lay->wp_h - img) / 2, img, img);
+    int ix = lay->wp_x + 12;
+    int iy = lay->wp_y + (lay->wp_h - img) / 2;
+    if (w->proto->hud_img_w > 0)
+        draw_item_hud_tile(w, ix, iy, img);
+    else
+        draw_item_image(w, ix, iy, img, img);
 
     int tx = lay->wp_x + 12 + img + 16;
     draw_string(w->proto->name, tx, lay->wp_y + 14, 0.017f);

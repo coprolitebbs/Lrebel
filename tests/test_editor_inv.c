@@ -212,11 +212,11 @@ int main(void)
     /* рамка слота основного оружия — цвет (150,150,175) */
     assert(!px_diff(16, 532, 150, 150, 175));
 
-    printf("== 4. O: клик добавляет предмет (пистолет 1x2) ==\n");
+    printf("== 4. O: клик добавляет предмет (пистолет 2x1) ==\n");
     push_key('o', SDL_SCANCODE_O);
     frame();
     assert(g_modal == ED_MODAL_INVPICK);
-    click_left(200, 382); /* первый тайл окна выбора — {object1}, 1x2 */
+    click_left(200, 382); /* первый тайл окна выбора — {object1}, 2x1 */
     {
         inventory *inv = g_obj_inv[1];
         assert(inventory_used_count(inv) == 1);
@@ -225,16 +225,17 @@ int main(void)
         assert(it->ammo_loaded == 8); /* магазин из config/objects.cfg */
         int sx, sy;
         inventory_item_size(it, &sx, &sy);
-        assert(sx == 1 && sy == 2);
-        assert(inventory_item_at(inv, 0, 1) == it);
+        assert(sx == 2 && sy == 1); /* горизонтальный предмет 2x1 */
+        assert(inventory_item_at(inv, 1, 0) == it);
     }
 
-    printf("== 5. O: боеприпас (кол 11) добавляется рядом, стек 30 ==\n");
-    click_left(640, 382); /* колонка 11 окна выбора — {object12} */
+    printf("== 5. O: боеприпас добавляется рядом, стек 30 ==\n");
+    click_left(640, 382); /* тайл окна выбора — {object12} */
     {
         inventory *inv = g_obj_inv[1];
         assert(inventory_used_count(inv) == 2);
-        inventory_item *it = inventory_item_at(inv, 1, 0);
+        /* пистолет 2x1 занял (0,0)-(1,0), боеприпас ложится в (2,0) */
+        inventory_item *it = inventory_item_at(inv, 2, 0);
         assert(it && it->proto && it->count == 30);
         int sx, sy;
         inventory_item_size(it, &sx, &sy);
@@ -248,10 +249,10 @@ int main(void)
     printf("== 6. перетаскивание: боеприпас (1,0) -> (10,10) ==\n");
     {
         inventory *inv = g_obj_inv[1];
-        inventory_item *ammo = inventory_item_at(inv, 1, 0);
-        drag_left(64, 56, 352, 376); /* центр ячейки (1,0) -> (10,10) */
+        inventory_item *ammo = inventory_item_at(inv, 2, 0);
+        drag_left(96, 56, 352, 376); /* центр ячейки (2,0) -> (10,10) */
         assert(inventory_item_at(inv, 10, 10) == ammo);
-        assert(inventory_item_at(inv, 1, 0) == NULL);
+        assert(inventory_item_at(inv, 2, 0) == NULL);
     }
 
     printf("== 7. выброс предмета за пределы инвентаря ==\n");

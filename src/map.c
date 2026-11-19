@@ -20,6 +20,7 @@
 #include <math.h>
 
 #include "readconfig.h"
+#include "objects.h" /* objects_faction_health — здоровье персонажей */
 #include "map.h"
 
 /* ------------------------------------------------------------ реестр */
@@ -40,6 +41,21 @@ static int bool_from_str(const char *s)
 {
     return s && (strcmp(s, "true") == 0 || strcmp(s, "1") == 0 ||
                  strcmp(s, "yes") == 0 || strcmp(s, "on") == 0);
+}
+
+/* Здоровье объекта при появлении на карте: у персонажей — полное
+ * (из config/objects.cfg, ключ health секции {char_typeN}), у предметов
+ * не используется (0). */
+static void map_object_init_health(map_object *o)
+{
+    if (o->type >= OBJ_TYPE_CHAR_FIRST &&
+        o->type < OBJ_TYPE_CHAR_FIRST + OBJ_TYPE_CHAR_COUNT) {
+        o->max_health = objects_faction_health((char_faction)o->type);
+        o->health = o->max_health;
+    } else {
+        o->max_health = 0;
+        o->health = 0;
+    }
 }
 
 int map_registry_init(const char *editor_cfg_path)
@@ -386,6 +402,7 @@ int map_load(game_map *m, const char *path)
             o->dir = (int)dir;
             o->x = x;
             o->y = y;
+            map_object_init_health(o);
         }
     }
 
@@ -478,6 +495,7 @@ int map_object_add(game_map *m, int type, float x, float y, int dir)
     o->x = x;
     o->y = y;
     o->dir = dir;
+    map_object_init_health(o);
     return m->object_count - 1;
 }
 

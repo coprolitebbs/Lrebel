@@ -256,6 +256,38 @@ void plat_draw_image(const plat_image *img,
     SDL_RenderCopy(g_renderer, img->tex, &src, &dst);
 }
 
+void plat_draw_image_rot(const plat_image *img,
+                         int src_x, int src_y, int src_w, int src_h,
+                         int dst_x, int dst_y, int dst_w, int dst_h,
+                         int quarter_turns)
+{
+    if (!img || !img->tex)
+        return;
+    SDL_Rect src = { src_x, src_y, src_w, src_h };
+    SDL_Rect dst = { dst_x, dst_y, dst_w, dst_h };
+    if ((quarter_turns % 4) == 0) {
+        SDL_RenderCopy(g_renderer, img->tex, &src, &dst);
+        return;
+    }
+    /* Поворот на 90/180/270 градусов вокруг центра конечного
+     * прямоугольника. SDL_RenderCopyEx сначала масштабирует фрагмент в
+     * dst-прямоугольник и только потом вращает его, поэтому при нечетном
+     * числе поворотов dst подменяется на пред-поворотный (ширина и
+     * высота переставляются, центр совпадает с центром конечного) — так
+     * пропорции фрагмента не искажаются. Точка center в
+     * SDL_RenderCopyEx задается относительно левого верхнего угла
+     * dst-прямоугольника. Угол в SDL — против часовой стрелки. */
+    int turns = quarter_turns % 4;
+    int rw = (turns % 2) ? dst_h : dst_w; /* пред-поворотные размеры     */
+    int rh = (turns % 2) ? dst_w : dst_h;
+    SDL_Rect rdst = { dst_x + (dst_w - rw) / 2,
+                      dst_y + (dst_h - rh) / 2, rw, rh };
+    SDL_Point center = { rw / 2, rh / 2 };
+    double angle = -90.0 * (double)turns;
+    SDL_RenderCopyEx(g_renderer, img->tex, &src, &rdst, angle,
+                     &center, SDL_FLIP_NONE);
+}
+
 void plat_draw_rect_frame(int x, int y, int w, int h,
                           unsigned char r, unsigned char g, unsigned char b)
 {

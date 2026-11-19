@@ -22,6 +22,7 @@
 
 #define EDITOR_CFG       "config/editor.cfg"
 #define GTILES_PATH      "img/gtiles.png"
+#define HUDIMG_PATH      "img/hudimages.png" /* тайлы HUD и картинки инвентаря */
 #define MAP_DIR          "maps"
 #define DEFAULT_MAP_NAME "unnamed.map"
 
@@ -53,6 +54,7 @@ enum {
 #define PICK_HEADER 40  /* высота заголовка окна выбора  */
 
 static plat_image *g_tiles = NULL;
+static plat_image *g_hudimg = NULL; /* атлас img/hudimages.png для инвентаря */
 static game_map    g_map;
 static camera      g_cam;
 static char        g_map_path[256];
@@ -515,7 +517,7 @@ static void editor_handle_keys(void)
             } else {
                 inventory *inv = editor_obj_inventory(g_selected);
                 if (inv)
-                    inventory_ui_open(inv, g_tiles, 0, 0,
+                    inventory_ui_open(inv, g_hudimg, 0, 0,
                                       plat_screen_width() / 2,
                                       plat_screen_height());
             }
@@ -836,6 +838,16 @@ int editor_init(const char *map_filename)
         return -1;
     }
 
+    /* атлас тайлов HUD: картинки предметов в инвентаре (черный фон тайлов
+     * прозрачен) и большие тайлы 128x128 */
+    g_hudimg = plat_load_image_colorkey(HUDIMG_PATH, 0, 0, 0);
+    if (!g_hudimg) {
+        fprintf(stderr, "editor: не удалось загрузить '%s'\n", HUDIMG_PATH);
+        plat_free_image(g_tiles);
+        g_tiles = NULL;
+        return -1;
+    }
+
     build_map_path(map_filename);
     if (map_load(&g_map, g_map_path) != 0) {
         fprintf(stderr, "editor: открываю пустую карту %dx%d; файл '%s' "
@@ -844,6 +856,8 @@ int editor_init(const char *map_filename)
         if (map_init(&g_map, map_def_width(), map_def_height()) != 0) {
             plat_free_image(g_tiles);
             g_tiles = NULL;
+            plat_free_image(g_hudimg);
+            g_hudimg = NULL;
             return -1;
         }
     }
@@ -897,4 +911,6 @@ void editor_shutdown(void)
     map_free(&g_map);
     plat_free_image(g_tiles);
     g_tiles = NULL;
+    plat_free_image(g_hudimg);
+    g_hudimg = NULL;
 }

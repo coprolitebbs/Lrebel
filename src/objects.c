@@ -28,6 +28,13 @@ static int            g_character_count = 0;
 static char g_faction_names[CHAR_FACTION_COUNT][OBJECT_NAME_MAX];
 static int  g_faction_player[CHAR_FACTION_COUNT];
 
+/* фракции: здоровье и координаты тайлов 128x128 в img/hudimages.png
+ * (в пикселях атласа, левый верхний угол; -1 — не заданы) */
+#define FACTION_HEALTH_DEFAULT 100
+static int g_faction_health[CHAR_FACTION_COUNT];
+static int g_faction_hud_x[CHAR_FACTION_COUNT][CHAR_TILE_STATE_COUNT];
+static int g_faction_hud_y[CHAR_FACTION_COUNT][CHAR_TILE_STATE_COUNT];
+
 /* ------------------------------------------------------------ утилиты */
 
 /* UTF-8 -> Windows-1251 с усечением до размера буфера. */
@@ -163,10 +170,10 @@ static void load_objects(const config *cfg)
         if (o->inventory_size_y > INVENTORY_SIZE)
             o->inventory_size_y = INVENTORY_SIZE;
 
-        /* картинка предмета в инвентаре: прямоугольник первого тайла
-         * объекта в общем атласе img/gtiles.png; в конфиге можно задать
-         * другой тайл ключами inv_img_row/inv_img_col (позже сюда впишем
-         * нарисованные картинки предметов) */
+        /* картинка предмета в инвентаре: прямоугольник в атласе
+         * img/hudimages.png (клетки сетки 32x32 — по умолчанию ряд 13,
+         * колонка N; размер равен габаритам предмета в клетках); в
+         * конфиге задается ключами inv_img_row/inv_img_col */
         int img_col = config_get_int(cfg, sect, "inv_img_col", g_object_count);
         int img_row = config_get_int(cfg, sect, "inv_img_row",
                                      OBJECT_INV_IMG_ROW);
@@ -176,8 +183,72 @@ static void load_objects(const config *cfg)
             img_row = 1;
         o->inv_img_x = (img_col - 1) * MAP_TILE_PX;
         o->inv_img_y = (img_row - 1) * MAP_TILE_PX;
-        o->inv_img_w = MAP_TILE_PX;
-        o->inv_img_h = MAP_TILE_PX;
+        o->inv_img_w = o->inventory_size_x * MAP_TILE_PX;
+        o->inv_img_h = o->inventory_size_y * MAP_TILE_PX;
+
+        /* большой тайл предмета 128x128 в img/hudimages.png (конфиг —
+         * hud_img_row/hud_img_col); по умолчанию тайла нет */
+        o->hud_img_w = 0;
+        o->hud_img_h = 0;
+        if (config_get(cfg, sect, "hud_img_row", NULL) &&
+            config_get(cfg, sect, "hud_img_col", NULL)) {
+            int hud_col = config_get_int(cfg, sect, "hud_img_col", 1);
+            int hud_row = config_get_int(cfg, sect, "hud_img_row", 1);
+            if (hud_col < 1)
+                hud_col = 1;
+            if (hud_row < 1)
+                hud_row = 1;
+            o->hud_img_x = (hud_col - 1) * OBJECT_HUD_IMG_PX;
+            o->hud_img_y = (hud_row - 1) * OBJECT_HUD_IMG_PX;
+            o->hud_img_w = OBJECT_HUD_IMG_PX;
+            o->hud_img_h = OBJECT_HUD_IMG_PX;
+        }
+    }
+}
+
+/* Координаты тайла фракции по умолчанию: тайлы 0..8 атласа — три
+ * состояния (полное/поврежденный/мертв) трех фракций подряд.
+ * Тайл номер t лежит в ряду t/8 (с 0), колонке t%8 (с 0). */
+static void default_faction_hud(int faction, char_tile_state st,
+                                int *x, int *y)
+{
+    int t = faction * CHAR_TILE_STATE_COUNT + (int)st;
+    *x = (t % 8) * OBJECT_HUD_IMG_PX;
+    *y = (t / 8) * OBJECT_HUD_IMG_PX;
+}
+
+/* Чтение пары ключей hud_img_row_<суффикс> / hud_img_col_<суффикс>
+ * (1-базные ряд и колонка тайла 128x128); 1 — прочитаны, 0 — нет. */
+static int read_faction_hud(const config *cfg, const char *sect,
+                            const char *suffix, int *x, int *y)
+{
+    char key[40];
+    snprintf(key, sizeof(key), "hud_img_row_%s", suffix);
+    if (!config_get(cfg, sect, key, NULL))
+        return 0;
+    snprintf(key, sizeof(key), "hud_img_col_%s", suffix);
+    if (!config_get(cfg, sect, key, NULL))
+        return 0;
+
+    snprintf(key, sizeof(key), "hud_img_row_%s", suffix);
+    int row = config_get_int(cfg, sect, key, 1);
+    snprintf(key, sizeof(key), "hud_img_col_%s", suffix);
+    int col = config_get_int(cfg, sect, key, 1);
+    if (row < 1)
+        row = 1;
+    if (col < 1)
+        col = 1;
+    *x = (col - 1) * OBJECT_HUD_IMG_PX;
+    *y = (row - 1) * OBJECT_HUD_IMG_PX;
+    return 1;
+}
+
+static const char *tile_state_suffix(char_tile_state st)
+{
+    switch (st) {
+    case CHAR_TILE_FULL:    return "full";
+    case CHAR_TILE_DAMAGED: return "damaged";
+    default:                return "dead";
     }
 }
 
@@ -191,6 +262,20 @@ static void load_factions(const config *cfg)
         const char *control = config_get(cfg, sect, "control", NULL);
         if (control)
             g_faction_player[n] = (strcmp(control, "player") == 0);
+
+        /* здоровье и тайлы персонажа 128x128 в img/hudimages.png */
+        g_faction_health[n] = config_get_int(cfg, sect, "health",
+                                             FACTION_HEALTH_DEFAULT);
+        if (g_faction_health[n] < 1)
+            g_faction_health[n] = 1;
+        for (int s = 0; s < CHAR_TILE_STATE_COUNT; s++) {
+            int x, y;
+            default_faction_hud(n, (char_tile_state)s, &x, &y);
+            read_faction_hud(cfg, sect, tile_state_suffix((char_tile_state)s),
+                             &x, &y);
+            g_faction_hud_x[n][s] = x;
+            g_faction_hud_y[n][s] = y;
+        }
     }
 }
 
@@ -300,4 +385,24 @@ int objects_faction_is_player(char_faction faction)
     if (faction < 0 || faction >= CHAR_FACTION_COUNT)
         return 0;
     return g_faction_player[faction];
+}
+
+int objects_faction_health(char_faction faction)
+{
+    if (faction < 0 || faction >= CHAR_FACTION_COUNT)
+        return FACTION_HEALTH_DEFAULT;
+    return g_faction_health[faction];
+}
+
+int objects_faction_hud_img(char_faction faction, char_tile_state st,
+                            int *x, int *y)
+{
+    if (faction < 0 || faction >= CHAR_FACTION_COUNT ||
+        st < 0 || st >= CHAR_TILE_STATE_COUNT)
+        return -1;
+    if (x)
+        *x = g_faction_hud_x[faction][st];
+    if (y)
+        *y = g_faction_hud_y[faction][st];
+    return 0;
 }
